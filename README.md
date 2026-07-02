@@ -67,7 +67,7 @@ Current limitations:
 
 ## Simulation Model
 
-- Road generation is deterministic from a seed and uses smooth harmonic curvature sampled into a 3-lane highway.
+- Road generation is deterministic from a seed and uses smooth base curvature plus localized turn features sampled into a 3-lane highway.
 - Vehicles use Frenet-like coordinates over the road centerline.
 - Longitudinal dynamics include nonlinear acceleration, braking, and drag.
 - Steering has actuator smoothing and road-curvature-relative heading dynamics.
