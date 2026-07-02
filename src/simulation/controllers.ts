@@ -8,6 +8,7 @@ import type {
   VehicleDetection,
 } from '../types';
 import { clamp, finiteOr } from './math';
+import { DEFAULT_TRAFFIC_PERSONALITY } from './personalities';
 import type { Road } from './road';
 import type { VehicleState } from './vehicle';
 
@@ -47,50 +48,67 @@ export function sanitizeAutopilotOutput(
 }
 
 export function builtInLaneCentering(vehicle: VehicleState, road: Road, targetLane = vehicle.targetLane): number {
+  const personality = vehicle.personality ?? DEFAULT_TRAFFIC_PERSONALITY;
   const desiredLateral = road.getLaneCenterOffset(targetLane);
-  const lateralError = desiredLateral - vehicle.lateral;
+  const rawLateralError = desiredLateral - vehicle.lateral;
+  const isChangingLanes = targetLane !== vehicle.laneIndex;
+  const lateralError = clamp(rawLateralError, isChangingLanes ? -1.45 : -2.15, isChangingLanes ? 1.45 : 2.15);
   const headingError = vehicle.headingOffset;
-  const curvatureFeedforward = road.sampleAt(vehicle.s + 22).curvature * 190;
-  return clamp(lateralError * 0.28 - headingError * 0.88 + curvatureFeedforward, -1, 1);
+  const previewDistance = clamp(vehicle.speed * 0.85, 14, 34);
+  const previewCurvature = road.sampleAt(vehicle.s + previewDistance).curvature;
+  const steeringScale = clamp(vehicle.speed / 22, 0.08, 1);
+  const curvatureFeedforward = (previewCurvature * vehicle.speed) / Math.max(0.08, 0.68 * steeringScale);
+  return clamp(lateralError * personality.steeringGain - headingError * personality.headingGain + curvatureFeedforward, -1, 1);
 }
 
 export function builtInSpeedControl(input: AutopilotInput, desiredSpeed = 29): number {
   const closest = closestVehicleAhead(input.vehicles, input.targetLane);
   let targetSpeed = desiredSpeed;
+  let gapBrake = 0;
 
   if (closest) {
     const frontSpeed = input.ego.speed + closest.relativeVy;
-    const desiredGap = 10 + input.ego.speed * 1.25;
+    const desiredGap = 12 + input.ego.speed * 1.55;
     const gapError = closest.relativeY - desiredGap;
-    if (gapError < 18) {
-      targetSpeed = Math.min(targetSpeed, Math.max(4, frontSpeed + gapError * 0.34));
+    if (gapError < 24) {
+      targetSpeed = Math.min(targetSpeed, Math.max(3, frontSpeed + gapError * 0.46));
     }
+    if (gapError < 0) gapBrake = gapError * 0.12;
   }
 
   const speedError = targetSpeed - input.ego.speed;
   const feedforward = accelerationFeedforward(targetSpeed, input.ego.speed);
-  return clamp(feedforward + speedError * 0.075, -1, 1);
+  return clamp(feedforward + speedError * 0.09 + gapBrake, -1, 1);
 }
 
 export function trafficAutopilot(vehicle: VehicleState, input: AutopilotInput, laneCount: number): AutopilotOutput {
+  const personality = vehicle.personality ?? DEFAULT_TRAFFIC_PERSONALITY;
   const currentTarget = clamp(vehicle.targetLane, 0, laneCount - 1);
   let targetLane = currentTarget;
   const closest = closestVehicleAhead(input.vehicles, currentTarget);
+  const stableForLaneChange =
+    input.ego.laneIndex === currentTarget && Math.abs(vehicle.headingOffset) < 0.07 && Math.abs(vehicle.actualSteering) < 0.35;
 
-  if (vehicle.laneChangeCooldown <= 0 && closest && closest.relativeY < 42 && closest.relativeVy < -1.25) {
+  if (
+    vehicle.laneChangeCooldown <= 0 &&
+    stableForLaneChange &&
+    closest &&
+    closest.relativeY < personality.laneChangeLookahead &&
+    closest.relativeVy < -personality.overtakeSpeedDelta
+  ) {
     const candidates = [currentTarget - 1, currentTarget + 1].filter((lane) => lane >= 0 && lane < laneCount);
     const bestLane = candidates
-      .map((lane) => ({ lane, score: laneClearanceScore(input.vehicles, lane) }))
-      .filter((candidate) => candidate.score > 0)
+      .map((lane) => ({ lane, score: laneClearanceScore(input.vehicles, lane, personality.minGap) }))
+      .filter((candidate) => candidate.score > 18 + personality.minGap * (1.2 - personality.laneChangeEagerness))
       .sort((a, b) => b.score - a.score)[0];
 
     if (bestLane) {
       targetLane = bestLane.lane;
-      vehicle.laneChangeCooldown = 5.5;
+      vehicle.laneChangeCooldown = personality.laneChangeCooldown;
     }
   }
 
-  const motor = builtInSpeedControl({ ...input, targetLane }, vehicle.desiredSpeed);
+  const motor = trafficSpeedControl({ ...input, targetLane }, vehicle.desiredSpeed, personality);
   return {
     motor,
     steering: 0,
@@ -140,11 +158,31 @@ export function accelerationFeedforward(targetSpeed: number, currentSpeed: numbe
   return clamp(requestedAccel, -1, 1);
 }
 
-function laneClearanceScore(vehicles: VehicleDetection[], laneIndex: number): number {
+function trafficSpeedControl(input: AutopilotInput, desiredSpeed: number, personality = DEFAULT_TRAFFIC_PERSONALITY): number {
+  const closest = closestVehicleAhead(input.vehicles, input.targetLane);
+  let targetSpeed = desiredSpeed;
+  let gapBrake = 0;
+
+  if (closest) {
+    const frontSpeed = input.ego.speed + closest.relativeVy;
+    const desiredGap = personality.minGap + input.ego.speed * personality.timeHeadway;
+    const gapError = closest.relativeY - desiredGap;
+    if (gapError < personality.laneChangeLookahead * 0.55) {
+      targetSpeed = Math.min(targetSpeed, Math.max(3, frontSpeed + gapError * personality.gapGain));
+    }
+    if (gapError < 0) gapBrake = gapError * personality.brakeGain;
+  }
+
+  const speedError = targetSpeed - input.ego.speed;
+  const feedforward = accelerationFeedforward(targetSpeed, input.ego.speed) * personality.feedforwardWeight;
+  return clamp(feedforward + speedError * personality.speedGain + gapBrake, -1, 1);
+}
+
+function laneClearanceScore(vehicles: VehicleDetection[], laneIndex: number, minGap: number): number {
   let score = 80;
   for (const vehicle of vehicles) {
     if (vehicle.laneIndex !== laneIndex) continue;
-    if (vehicle.relativeY > -16 && vehicle.relativeY < 34) return -1;
+    if (vehicle.relativeY > -minGap * 1.8 && vehicle.relativeY < minGap * 3.1) return -1;
     if (vehicle.relativeY > 0) score = Math.min(score, vehicle.relativeY);
   }
   return score;

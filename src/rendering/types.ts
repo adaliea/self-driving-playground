@@ -35,6 +35,7 @@ export interface RenderVehicle {
   commandMotor: number;
   commandSteering: number;
   collision: boolean;
+  personality?: string;
 }
 
 export interface RenderCamera {
