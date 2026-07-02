@@ -15,6 +15,14 @@ Build check:
 npm run build
 ```
 
+Headless traffic/personality report:
+
+```bash
+npm run traffic:report -- --density 0.9 --runs 3 --seconds 90 --warmup 15 --start-speed 24
+```
+
+This runs built-in traffic outside the user-code runner and reports traffic wave strength, speed spread, physical clearance, lane-keeping quality, flow, collision events, hard braking events, lane changes, and per-personality behavior. Use `--json` for machine-readable output.
+
 ## Project Structure
 
 ```text
@@ -24,7 +32,7 @@ src/
   sandbox/     TypeScript transpilation and sandboxed iframe/worker client
   toolbox/     insertable helper snippets and built-in controller examples
   types/       documented public autopilot API types
-  ui/          React/Tailwind controls, Monaco editor, telemetry, toolbox, docs
+  ui/          React/Tailwind controls, Monaco editor, telemetry, toolbox menus
 public/
   sandbox.html isolated browser sandbox host
 ```
@@ -63,7 +71,7 @@ Current limitations:
 - Vehicles use Frenet-like coordinates over the road centerline.
 - Longitudinal dynamics include nonlinear acceleration, braking, and drag.
 - Steering has actuator smoothing and road-curvature-relative heading dynamics.
-- Traffic uses the same normalized controller output shape as ego controllers, with built-in lane centering, adaptive speed control, and target-lane changes.
+- Traffic uses the same normalized controller output shape as ego controllers, with built-in lane centering, adaptive speed control, target-lane changes, and varied driving personalities.
 - Sensors produce ego-relative bounding boxes and lane-line samples, with optional jitter, missing samples, degraded confidence, and smoothing delay.
 
 Known simplifications:

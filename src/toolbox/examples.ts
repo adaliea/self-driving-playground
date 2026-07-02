@@ -194,11 +194,13 @@ ${laneAnalyzer}
 
 ${pidController}
 
+${speedHelpers}
+
 const lanePid = createPidController({
   // P reacts to the current offset from lane center.
   kp: 0.36,
-  // I slowly removes persistent bias from noisy sensors or curved roads.
-  ki: 0.014,
+  // I slowly removes persistent bias. Keep it small; too much I can wind up and cause slow weaving.
+  ki: 0.004,
   // D damps fast changes so the car does not over-correct.
   kd: 0.12,
   outputMin: -1,
@@ -207,17 +209,31 @@ const lanePid = createPidController({
   integralMax: 2,
 });
 
+const speedPid = createPidController({
+  kp: 0.09,
+  ki: 0.004,
+  kd: 0.012,
+  outputMin: -1,
+  outputMax: 1,
+  integralMin: -4,
+  integralMax: 4,
+});
+
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   const lane = analyzeLane(input.laneLines);
   const laneError = lane.centerOffset + lane.heading * 2.2;
   const steering = lanePid.update(laneError, input.dt);
+  const targetSpeed = adaptiveCruiseTargetSpeed(input, 28);
+  const motor = accelerationFeedforward(targetSpeed, input.ego.speed) +
+    speedPid.update(targetSpeed - input.ego.speed, input.dt);
 
   return {
-    motor: 0.36,
+    motor: clamp(motor, -1, 1),
     steering: clamp(steering, -1, 1),
     targetLane: input.targetLane,
     debug: {
       lanePid: lanePid.getDebug(),
+      speedPid: speedPid.getDebug(),
     },
   };
 }`,

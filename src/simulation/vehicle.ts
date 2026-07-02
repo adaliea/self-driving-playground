@@ -1,3 +1,5 @@
+import type { TrafficPersonalityInstance } from './personalities';
+
 export type VehicleKind = 'ego' | 'traffic';
 
 export interface VehicleState {
@@ -19,6 +21,7 @@ export interface VehicleState {
   commandSteering: number;
   laneChangeCooldown: number;
   collision: boolean;
+  personality?: TrafficPersonalityInstance;
 }
 
 export interface AppliedControls {

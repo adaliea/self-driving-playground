@@ -7,6 +7,7 @@ import { SeededRandom } from './random';
 import { SensorSimulator } from './sensors';
 import { clamp, metersPerSecondToMph, round } from './math';
 import type { AppliedControls, VehicleState } from './vehicle';
+import { createTrafficPersonality, type TrafficPersonalityInstance } from './personalities';
 
 const EGO_ID = 'ego';
 const TRAFFIC_COLORS = ['#a9bed0', '#d7dde3', '#8ea6ff', '#f0b56a', '#82dec1'];
@@ -16,6 +17,30 @@ const TRAFFIC_BACK_BUFFER = 250;
 const TRAFFIC_FRONT_BUFFER = 820;
 const TRAFFIC_MIN_SPAWN_GAP = 10;
 
+export interface SimulationVehicleDebug {
+  id: string;
+  kind: 'ego' | 'traffic';
+  s: number;
+  lateral: number;
+  headingOffset: number;
+  speed: number;
+  width: number;
+  length: number;
+  laneIndex: number;
+  targetLane: number;
+  desiredSpeed: number;
+  actualSteering: number;
+  commandSteering: number;
+  collision: boolean;
+  personality?: string;
+}
+
+export interface SimulationDebugState {
+  time: number;
+  collisions: number;
+  vehicles: SimulationVehicleDebug[];
+}
+
 export class Simulation {
   private road: Road;
   private rng: SeededRandom;
@@ -23,6 +48,7 @@ export class Simulation {
   private vehicles: VehicleState[] = [];
   private time = 0;
   private collisions = 0;
+  private egoCollisionActive = false;
   private lastEgoInput: AutopilotInput;
   private lastApplied: AppliedControls = {
     userMotor: 0,
@@ -56,6 +82,7 @@ export class Simulation {
     this.sensors.reset();
     this.time = 0;
     this.collisions = 0;
+    this.egoCollisionActive = false;
 
     const egoLane = 1;
     this.vehicles = [
@@ -204,6 +231,7 @@ export class Simulation {
           commandMotor: vehicle.commandMotor,
           commandSteering: vehicle.commandSteering,
           collision: vehicle.collision,
+          personality: vehicle.personality?.label,
         };
       }),
       sensors: {
@@ -229,6 +257,30 @@ export class Simulation {
         debug: this.lastUserOutput.debug,
       },
       settings,
+    };
+  }
+
+  getDebugState(): SimulationDebugState {
+    return {
+      time: this.time,
+      collisions: this.collisions,
+      vehicles: this.vehicles.map((vehicle) => ({
+        id: vehicle.id,
+        kind: vehicle.kind,
+        s: vehicle.s,
+        lateral: vehicle.lateral,
+        headingOffset: vehicle.headingOffset,
+        speed: vehicle.speed,
+        width: vehicle.width,
+        length: vehicle.length,
+        laneIndex: vehicle.laneIndex,
+        targetLane: vehicle.targetLane,
+        desiredSpeed: vehicle.desiredSpeed,
+        actualSteering: vehicle.actualSteering,
+        commandSteering: vehicle.commandSteering,
+        collision: vehicle.collision,
+        personality: vehicle.personality?.label,
+      })),
     };
   }
 
@@ -297,8 +349,9 @@ export class Simulation {
         vehicle.laneIndex = lane;
         vehicle.targetLane = lane;
         vehicle.headingOffset = this.rng.range(-0.02, 0.02);
-        vehicle.speed = this.trafficInitialSpeed(settings);
-        vehicle.desiredSpeed = this.trafficDesiredSpeed(settings);
+        vehicle.personality = this.createPersonality(settings);
+        vehicle.speed = this.trafficInitialSpeed(vehicle.personality);
+        vehicle.desiredSpeed = this.trafficDesiredSpeed(vehicle.personality, settings);
         vehicle.actualMotor = 0;
         vehicle.actualSteering = 0;
         vehicle.collision = false;
@@ -307,50 +360,65 @@ export class Simulation {
   }
 
   private createTrafficVehicle(index: number, lane: number, station: number, settings: PlaygroundSettings): VehicleState {
+    const personality = this.createPersonality(settings);
     return {
       id: `traffic-${index}-${Math.round(station)}`,
       kind: 'traffic',
       s: station,
       lateral: this.road.getLaneCenterOffset(lane) + this.rng.range(-0.25, 0.25),
       headingOffset: this.rng.range(-0.025, 0.025),
-      speed: this.trafficInitialSpeed(settings),
+      speed: this.trafficInitialSpeed(personality),
       laneIndex: lane,
       targetLane: lane,
-      desiredSpeed: this.trafficDesiredSpeed(settings),
-      width: this.rng.range(1.85, 2.25),
-      length: this.rng.range(4.1, 5.2),
-      color: TRAFFIC_COLORS[index % TRAFFIC_COLORS.length],
+      desiredSpeed: this.trafficDesiredSpeed(personality, settings),
+      width: personality.id === 'truck' ? this.rng.range(2.25, 2.55) : this.rng.range(1.85, 2.25),
+      length: personality.id === 'truck' ? this.rng.range(6.8, 8.8) : this.rng.range(4.1, 5.2),
+      color: personality.color ?? TRAFFIC_COLORS[index % TRAFFIC_COLORS.length],
       actualMotor: 0,
       actualSteering: 0,
       commandMotor: 0,
       commandSteering: 0,
       laneChangeCooldown: this.rng.range(0, 4),
       collision: false,
+      personality,
     };
   }
 
   private resolveCloseVehicles(): void {
     for (const vehicle of this.vehicles) vehicle.collision = false;
+    let egoCollisionThisStep = false;
+    const sortedVehicles = [...this.vehicles].sort((a, b) => a.s - b.s);
 
-    for (let lane = 0; lane < this.road.laneCount; lane += 1) {
-      const laneVehicles = this.vehicles
-        .filter((vehicle) => vehicle.laneIndex === lane && Math.abs(vehicle.lateral - this.road.getLaneCenterOffset(lane)) < 2.6)
-        .sort((a, b) => a.s - b.s);
-
-      for (let index = 1; index < laneVehicles.length; index += 1) {
-        const behind = laneVehicles[index - 1];
-        const ahead = laneVehicles[index];
-        const minGap = (behind.length + ahead.length) / 2 + 2.2;
+    for (let behindIndex = 0; behindIndex < sortedVehicles.length; behindIndex += 1) {
+      const behind = sortedVehicles[behindIndex];
+      for (let aheadIndex = behindIndex + 1; aheadIndex < sortedVehicles.length; aheadIndex += 1) {
+        const ahead = sortedVehicles[aheadIndex];
         const gap = ahead.s - behind.s;
-        if (gap < minGap) {
-          behind.s = ahead.s - minGap;
-          behind.speed = Math.min(behind.speed, ahead.speed * 0.98);
+        const maxRelevantGap = (behind.length + ahead.length) / 2 + 3.5;
+        if (gap > maxRelevantGap) break;
+
+        const lateralGap = Math.abs(ahead.lateral - behind.lateral);
+        const bodyHalfWidth = (behind.width + ahead.width) / 2;
+        const bodyHalfLength = (behind.length + ahead.length) / 2;
+        const bodiesOverlap = gap < bodyHalfLength && lateralGap < bodyHalfWidth;
+
+        if (bodiesOverlap) {
           behind.collision = true;
           ahead.collision = true;
-          if (behind.kind === 'ego' || ahead.kind === 'ego') this.collisions += 1;
+          if (behind.kind === 'ego' || ahead.kind === 'ego') egoCollisionThisStep = true;
+        }
+
+        const sameTravelPath = lateralGap < bodyHalfWidth + 0.35;
+        const softFollowingGap = bodyHalfLength + 1.05;
+        if (sameTravelPath && gap < softFollowingGap) {
+          behind.s = Math.min(behind.s, ahead.s - softFollowingGap);
+          behind.speed = Math.min(behind.speed, ahead.speed * 0.985);
         }
       }
     }
+
+    if (egoCollisionThisStep && !this.egoCollisionActive) this.collisions += 1;
+    this.egoCollisionActive = egoCollisionThisStep;
   }
 
   private targetTrafficCount(settings: PlaygroundSettings): number {
@@ -363,16 +431,20 @@ export class Simulation {
     return 58 - density * 45;
   }
 
-  private trafficDesiredSpeed(settings: PlaygroundSettings): number {
+  private createPersonality(settings: PlaygroundSettings): TrafficPersonalityInstance {
+    return createTrafficPersonality(this.rng, settings.trafficDensity);
+  }
+
+  private trafficDesiredSpeed(personality: TrafficPersonalityInstance, settings: PlaygroundSettings): number {
     const density = clamp(settings.trafficDensity, 0, 1);
     if (density > 0.72 && this.rng.chance(0.16 + (density - 0.72) * 0.6)) {
       return this.rng.range(9, 17);
     }
-    return this.rng.range(20 - density * 4, 38 - density * 5);
+    return this.rng.range(personality.desiredSpeedMin - density * 2.2, personality.desiredSpeedMax - density * 4);
   }
 
-  private trafficInitialSpeed(settings: PlaygroundSettings): number {
-    const desired = this.trafficDesiredSpeed(settings);
+  private trafficInitialSpeed(personality: TrafficPersonalityInstance): number {
+    const desired = this.rng.range(personality.desiredSpeedMin, personality.desiredSpeedMax);
     return clamp(desired + this.rng.range(-3.5, 3.5), 6, 38);
   }
 
