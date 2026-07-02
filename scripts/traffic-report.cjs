@@ -32,6 +32,9 @@ const seedStart = numberArg(args.seed, 42);
 const runs = numberArg(args.runs, 3);
 const density = numberArg(args.density, 0.9);
 const startSpeed = numberArg(args['start-speed'] ?? args.startSpeed, 24);
+const noisyLaneLines = booleanArg(args['noisy-lanes'] ?? args.noisyLaneLines ?? args.noisy, false);
+const noisyVehicles = booleanArg(args['noisy-vehicles'] ?? args.noisyVehicles ?? args.noisy, false);
+const actuatorVariation = booleanArg(args['actuator-variation'] ?? args.actuatorVariation, false);
 const json = Boolean(args.json);
 
 const reports = [];
@@ -52,9 +55,9 @@ function runScenario(seed, trafficDensity, durationSeconds, warmupSeconds, egoSt
     seed,
     trafficDensity,
     startingSpeed: egoStartSpeed,
-    noisyLaneLines: false,
-    noisyVehicles: false,
-    actuatorVariation: false,
+    noisyLaneLines,
+    noisyVehicles,
+    actuatorVariation,
     steerAssist: true,
     accelerateAssist: true,
     debugOverlays: false,
@@ -115,11 +118,14 @@ function runScenario(seed, trafficDensity, durationSeconds, warmupSeconds, egoSt
 }
 
 function sampleState(state, previousSample) {
+  const ego = state.vehicles.find((vehicle) => vehicle.kind === 'ego');
   const traffic = state.vehicles.filter((vehicle) => vehicle.kind === 'traffic');
   const speeds = traffic.map((vehicle) => vehicle.speed);
   const gaps = [];
   const byPersonality = new Map();
+  const byModel = new Map();
   const laneKeeping = createLaneKeepingAccumulator();
+  const egoLaneKeeping = createLaneKeepingAccumulator();
   const sortedTraffic = [...traffic].sort((a, b) => a.s - b.s);
 
   for (let behindIndex = 0; behindIndex < sortedTraffic.length; behindIndex += 1) {
@@ -146,6 +152,17 @@ function sampleState(state, previousSample) {
     addLaneKeepingSample(bucket.laneKeeping, vehicle, previousSample.get(vehicle.id));
     addLaneKeepingSample(laneKeeping, vehicle, previousSample.get(vehicle.id));
     byPersonality.set(key, bucket);
+
+    const modelKey = laneModelLabel(vehicle.laneControlModel);
+    const modelBucket = byModel.get(modelKey) ?? { count: 0, speedSum: 0, laneKeeping: createLaneKeepingAccumulator() };
+    modelBucket.count += 1;
+    modelBucket.speedSum += vehicle.speed;
+    addLaneKeepingSample(modelBucket.laneKeeping, vehicle, previousSample.get(vehicle.id));
+    byModel.set(modelKey, modelBucket);
+  }
+
+  if (ego) {
+    addLaneKeepingSample(egoLaneKeeping, ego, previousSample.get(ego.id));
   }
 
   return {
@@ -158,12 +175,15 @@ function sampleState(state, previousSample) {
     gapMin: gaps.length ? Math.min(...gaps) : 0,
     stoppedFraction: speeds.length ? speeds.filter((speed) => speed < 5).length / speeds.length : 0,
     laneKeeping,
+    egoLaneKeeping,
     byPersonality,
+    byModel,
   };
 }
 
 function finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneChanges, hardBrakes) {
   const personality = new Map();
+  const model = new Map();
   for (const sample of samples) {
     for (const [label, bucket] of sample.byPersonality.entries()) {
       const current = personality.get(label) ?? {
@@ -178,6 +198,20 @@ function finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneCh
       mergeLaneKeeping(current.laneKeeping, bucket.laneKeeping);
       personality.set(label, current);
     }
+
+    for (const [label, bucket] of sample.byModel.entries()) {
+      const current = model.get(label) ?? {
+        samples: 0,
+        countSum: 0,
+        speedSum: 0,
+        laneKeeping: createLaneKeepingAccumulator(),
+      };
+      current.samples += 1;
+      current.countSum += bucket.count;
+      current.speedSum += bucket.speedSum / Math.max(1, bucket.count);
+      mergeLaneKeeping(current.laneKeeping, bucket.laneKeeping);
+      model.set(label, current);
+    }
   }
 
   const personalitySummary = [...personality.entries()]
@@ -191,8 +225,19 @@ function finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneCh
     }))
     .sort((a, b) => b.avgCount - a.avgCount);
 
+  const modelSummary = [...model.entries()]
+    .map(([label, bucket]) => ({
+      label,
+      avgCount: bucket.countSum / Math.max(1, bucket.samples),
+      avgSpeedMph: mpsToMph(bucket.speedSum / Math.max(1, bucket.samples)),
+      laneKeeping: summarizeLaneKeeping(bucket.laneKeeping),
+    }))
+    .sort((a, b) => b.avgCount - a.avgCount);
+
   const laneKeeping = createLaneKeepingAccumulator();
+  const egoLaneKeeping = createLaneKeepingAccumulator();
   for (const sample of samples) mergeLaneKeeping(laneKeeping, sample.laneKeeping);
+  for (const sample of samples) mergeLaneKeeping(egoLaneKeeping, sample.egoLaneKeeping);
   const speedStdMph = mpsToMph(mean(samples.map((sample) => sample.speedStd)));
   const stoppedFraction = mean(samples.map((sample) => sample.stoppedFraction));
   const flowPerMinute = passEvents.length / Math.max(0.01, (seconds - warmup) / 60);
@@ -210,9 +255,11 @@ function finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneCh
     avgGapMeters: mean(samples.map((sample) => sample.gapMean)),
     minGapMeters: Math.min(...samples.map((sample) => sample.gapMin).filter((gap) => gap > 0)),
     laneKeeping: summarizeLaneKeeping(laneKeeping),
+    egoLaneKeeping: summarizeLaneKeeping(egoLaneKeeping),
     stoppedFraction,
     flowPerMinute,
     collisionDelta,
+    modelSummary,
     personalitySummary,
   };
 }
@@ -230,6 +277,14 @@ function summarizeReports(reports) {
     headingRmsDegrees: mean(reports.map((report) => report.laneKeeping.headingRmsDegrees)),
     steeringRateMean: mean(reports.map((report) => report.laneKeeping.steeringRateMean)),
     laneExcursionPct: mean(reports.map((report) => report.laneKeeping.laneExcursionPct)),
+    laneChangePct: mean(reports.map((report) => report.laneKeeping.laneChangePct)),
+    assignedLaneExitPct: mean(reports.map((report) => report.laneKeeping.assignedLaneExitPct)),
+    roadExitPct: mean(reports.map((report) => report.laneKeeping.roadExitPct)),
+    maxRoadOverrunMeters: Math.max(...reports.map((report) => report.laneKeeping.maxRoadOverrunMeters)),
+    egoLaneErrorRmsMeters: mean(reports.map((report) => report.egoLaneKeeping.laneErrorRmsMeters)),
+    egoHeadingRmsDegrees: mean(reports.map((report) => report.egoLaneKeeping.headingRmsDegrees)),
+    egoAssignedLaneExitPct: mean(reports.map((report) => report.egoLaneKeeping.assignedLaneExitPct)),
+    egoRoadExitPct: mean(reports.map((report) => report.egoLaneKeeping.roadExitPct)),
     stoppedFraction: mean(reports.map((report) => report.stoppedFraction)),
     flowPerMinute: mean(reports.map((report) => report.flowPerMinute)),
     collisions: reports.reduce((total, report) => total + report.collisionDelta, 0),
@@ -239,7 +294,10 @@ function summarizeReports(reports) {
 function printReport(reports, summary) {
   console.log('Traffic personality report');
   console.log('==========================');
-  console.log(`runs=${summary.runs} density=${density.toFixed(2)} seconds=${seconds} warmup=${warmup} startSpeed=${startSpeed} m/s`);
+  console.log(
+    `runs=${summary.runs} density=${density.toFixed(2)} seconds=${seconds} warmup=${warmup} startSpeed=${startSpeed} m/s ` +
+      `noisyLanes=${noisyLaneLines} noisyVehicles=${noisyVehicles} actuatorVariation=${actuatorVariation}`,
+  );
   console.log(
     `avg cars=${summary.avgTrafficCount.toFixed(1)} avg speed=${summary.avgSpeedMph.toFixed(1)} mph ` +
       `speed std=${summary.speedStdMph.toFixed(1)} mph wave=${summary.waveIndex.toFixed(1)}`,
@@ -252,6 +310,14 @@ function printReport(reports, summary) {
     `lane rms=${summary.laneErrorRmsMeters.toFixed(2)} m heading rms=${summary.headingRmsDegrees.toFixed(1)} deg ` +
       `steer rate=${summary.steeringRateMean.toFixed(2)}/s excursions=${summary.laneExcursionPct.toFixed(1)}%`,
   );
+  console.log(
+    `lane-change=${summary.laneChangePct.toFixed(1)}% assigned-exit=${summary.assignedLaneExitPct.toFixed(1)}% ` +
+      `offroad=${summary.roadExitPct.toFixed(1)}% max offroad=${summary.maxRoadOverrunMeters.toFixed(2)} m`,
+  );
+  console.log(
+    `ego assist lane rms=${summary.egoLaneErrorRmsMeters.toFixed(2)} m heading rms=${summary.egoHeadingRmsDegrees.toFixed(1)} deg ` +
+      `assigned-exit=${summary.egoAssignedLaneExitPct.toFixed(1)}% offroad=${summary.egoRoadExitPct.toFixed(1)}%`,
+  );
 
   for (const report of reports) {
     console.log('');
@@ -260,6 +326,16 @@ function printReport(reports, summary) {
       `  cars=${report.avgTrafficCount.toFixed(1)} speed=${report.avgSpeedMph.toFixed(1)} mph ` +
         `wave=${report.waveIndex.toFixed(1)} flow=${report.flowPerMinute.toFixed(1)} veh/min collisions=${report.collisionDelta}`,
     );
+    for (const model of report.modelSummary) {
+      console.log(
+        `  model ${model.label.padEnd(7)} count=${model.avgCount.toFixed(1).padStart(5)} ` +
+          `laneRms=${model.laneKeeping.laneErrorRmsMeters.toFixed(2).padStart(4)}m ` +
+          `head=${model.laneKeeping.headingRmsDegrees.toFixed(1).padStart(4)}deg ` +
+          `steer=${model.laneKeeping.steeringRateMean.toFixed(2).padStart(4)}/s ` +
+          `exit=${model.laneKeeping.assignedLaneExitPct.toFixed(1).padStart(4)}% ` +
+          `off=${model.laneKeeping.roadExitPct.toFixed(1).padStart(4)}%`,
+      );
+    }
     for (const personality of report.personalitySummary) {
       console.log(
         `  ${personality.label.padEnd(10)} count=${personality.avgCount.toFixed(1).padStart(5)} ` +
@@ -267,6 +343,8 @@ function printReport(reports, summary) {
           `laneRms=${personality.laneKeeping.laneErrorRmsMeters.toFixed(2).padStart(4)}m ` +
           `head=${personality.laneKeeping.headingRmsDegrees.toFixed(1).padStart(4)}deg ` +
           `exc=${personality.laneKeeping.laneExcursionPct.toFixed(1).padStart(4)}% ` +
+          `exit=${personality.laneKeeping.assignedLaneExitPct.toFixed(1).padStart(4)}% ` +
+          `off=${personality.laneKeeping.roadExitPct.toFixed(1).padStart(4)}% ` +
           `laneChanges=${String(personality.laneChanges).padStart(4)} hardBrakes=${String(personality.hardBrakes).padStart(4)}`,
       );
     }
@@ -289,17 +367,26 @@ function printReport(reports, summary) {
   if (summary.laneErrorRmsMeters > 0.42 || summary.headingRmsDegrees > 4 || summary.laneExcursionPct > 4) {
     console.log('- Lane keeping is unstable: lower steeringGain/headingGain or increase steering actuator smoothing for the worst personalities.');
   }
+  if (summary.assignedLaneExitPct > 1.5) {
+    console.log('- Vehicles are leaving assigned lanes outside planned changes: lower lateral gains or lane-change eagerness for the worst personalities.');
+  }
+  if (summary.roadExitPct > 0) {
+    console.log('- Vehicles are leaving the road: strengthen road-edge recovery or reduce outer-lane lane-change aggressiveness.');
+  }
 }
 
 function updateSamplePrevious(state, previousSample) {
+  const previous = new Map(previousSample);
   previousSample.clear();
   for (const vehicle of state.vehicles) {
-    if (vehicle.kind !== 'traffic') continue;
+    const activeLaneChange = isActiveLaneChange(vehicle, previous.get(vehicle.id));
     previousSample.set(vehicle.id, {
       lateral: vehicle.lateral,
       headingOffset: vehicle.headingOffset,
       actualSteering: vehicle.actualSteering,
       targetLane: vehicle.targetLane,
+      activeLaneChange,
+      laneControlModel: vehicle.laneControlModel,
     });
   }
 }
@@ -313,13 +400,29 @@ function createLaneKeepingAccumulator() {
     steeringRateAbs: 0,
     steeringRateSamples: 0,
     laneExcursions: 0,
+    trackingSamples: 0,
+    laneChangeSamples: 0,
+    assignedLaneExitSamples: 0,
+    roadExitSamples: 0,
+    maxRoadOverrunMeters: 0,
   };
 }
 
 function addLaneKeepingSample(bucket, vehicle, previous) {
   const targetCenter = laneCenter(vehicle.targetLane);
   const laneError = vehicle.lateral - targetCenter;
-  const holdingLane = vehicle.targetLane === vehicle.laneIndex;
+  const activeLaneChange = isActiveLaneChange(vehicle, previous);
+  const assignedLaneExit = vehicleBodyExitsAssignedLane(vehicle, laneError);
+  const roadOverrun = vehicleRoadOverrun(vehicle);
+  const holdingLane = !activeLaneChange;
+
+  bucket.trackingSamples += 1;
+  if (activeLaneChange) bucket.laneChangeSamples += 1;
+  if (!activeLaneChange && assignedLaneExit) bucket.assignedLaneExitSamples += 1;
+  if (roadOverrun > 0) {
+    bucket.roadExitSamples += 1;
+    bucket.maxRoadOverrunMeters = Math.max(bucket.maxRoadOverrunMeters, roadOverrun);
+  }
 
   if (holdingLane) {
     bucket.samples += 1;
@@ -344,6 +447,11 @@ function mergeLaneKeeping(target, source) {
   target.steeringRateAbs += source.steeringRateAbs;
   target.steeringRateSamples += source.steeringRateSamples;
   target.laneExcursions += source.laneExcursions;
+  target.trackingSamples += source.trackingSamples;
+  target.laneChangeSamples += source.laneChangeSamples;
+  target.assignedLaneExitSamples += source.assignedLaneExitSamples;
+  target.roadExitSamples += source.roadExitSamples;
+  target.maxRoadOverrunMeters = Math.max(target.maxRoadOverrunMeters, source.maxRoadOverrunMeters);
 }
 
 function summarizeLaneKeeping(bucket) {
@@ -354,7 +462,35 @@ function summarizeLaneKeeping(bucket) {
     steeringRms: Math.sqrt(bucket.steeringSq / Math.max(1, bucket.samples)),
     steeringRateMean: bucket.steeringRateAbs / Math.max(1, bucket.steeringRateSamples),
     laneExcursionPct: (bucket.laneExcursions / Math.max(1, bucket.samples)) * 100,
+    laneChangePct: (bucket.laneChangeSamples / Math.max(1, bucket.trackingSamples)) * 100,
+    assignedLaneExitPct: (bucket.assignedLaneExitSamples / Math.max(1, bucket.trackingSamples)) * 100,
+    roadExitPct: (bucket.roadExitSamples / Math.max(1, bucket.trackingSamples)) * 100,
+    maxRoadOverrunMeters: bucket.maxRoadOverrunMeters,
   };
+}
+
+function isActiveLaneChange(vehicle, previous) {
+  const targetCenter = laneCenter(vehicle.targetLane);
+  const laneError = vehicle.lateral - targetCenter;
+  const targetChanged = previous && previous.targetLane !== vehicle.targetLane;
+  const settledInTargetLane = vehicle.laneIndex === vehicle.targetLane && Math.abs(laneError) < 0.42 && Math.abs(vehicle.headingOffset) < 0.07;
+
+  return Boolean(targetChanged || vehicle.laneIndex !== vehicle.targetLane || (previous?.activeLaneChange && !settledInTargetLane));
+}
+
+function vehicleBodyExitsAssignedLane(vehicle, laneError) {
+  const halfWidth = (vehicle.width ?? 2) / 2;
+  return Math.abs(laneError) + halfWidth > ROAD_LANE_WIDTH / 2 + 0.05;
+}
+
+function vehicleRoadOverrun(vehicle) {
+  const roadHalfWidth = (ROAD_LANE_COUNT * ROAD_LANE_WIDTH) / 2;
+  const halfWidth = (vehicle.width ?? 2) / 2;
+  return Math.max(0, Math.abs(vehicle.lateral) + halfWidth - roadHalfWidth);
+}
+
+function laneModelLabel(model) {
+  return model === 'lateralVelocity' ? 'LatVel' : 'Clamped';
 }
 
 function laneCenter(laneIndex) {
@@ -385,6 +521,14 @@ function parseArgs(argv) {
 function numberArg(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function booleanArg(value, fallback) {
+  if (value === undefined) return fallback;
+  if (value === true) return true;
+  if (value === false) return false;
+  if (typeof value === 'string') return !['false', '0', 'no', 'off'].includes(value.toLowerCase());
+  return Boolean(value);
 }
 
 function mean(values) {

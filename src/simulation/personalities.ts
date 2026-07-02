@@ -2,6 +2,7 @@ import { clamp } from './math';
 import type { SeededRandom } from './random';
 
 export type TrafficPersonalityId = 'cautious' | 'commuter' | 'assertive' | 'tailgater' | 'truck' | 'distracted';
+export type LaneControlModel = 'clampedLateral' | 'lateralVelocity';
 
 export interface TrafficPersonality {
   id: TrafficPersonalityId;
@@ -13,6 +14,10 @@ export interface TrafficPersonality {
   laneChangeLookahead: number;
   laneChangeEagerness: number;
   laneChangeCooldown: number;
+  laneChangeMaxLateralVelocity: number;
+  laneChangeFrontGap: number;
+  laneChangeRearGap: number;
+  laneChangeTimeBuffer: number;
   overtakeSpeedDelta: number;
   speedGain: number;
   gapGain: number;
@@ -20,11 +25,13 @@ export interface TrafficPersonality {
   feedforwardWeight: number;
   steeringGain: number;
   headingGain: number;
+  lateralVelocityShare: number;
   color: string;
 }
 
 export interface TrafficPersonalityInstance extends TrafficPersonality {
   variation: number;
+  laneControlModel: LaneControlModel;
 }
 
 const PERSONALITIES: TrafficPersonality[] = [
@@ -38,6 +45,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     laneChangeLookahead: 34,
     laneChangeEagerness: 0.25,
     laneChangeCooldown: 8.5,
+    laneChangeMaxLateralVelocity: 0.95,
+    laneChangeFrontGap: 18,
+    laneChangeRearGap: 20,
+    laneChangeTimeBuffer: 0.68,
     overtakeSpeedDelta: 2.3,
     speedGain: 0.06,
     gapGain: 0.22,
@@ -45,6 +56,7 @@ const PERSONALITIES: TrafficPersonality[] = [
     feedforwardWeight: 0.75,
     steeringGain: 0.24,
     headingGain: 0.82,
+    lateralVelocityShare: 0.2,
     color: '#d7dde3',
   },
   {
@@ -57,6 +69,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     laneChangeLookahead: 42,
     laneChangeEagerness: 0.52,
     laneChangeCooldown: 5.8,
+    laneChangeMaxLateralVelocity: 1.25,
+    laneChangeFrontGap: 14,
+    laneChangeRearGap: 15,
+    laneChangeTimeBuffer: 0.48,
     overtakeSpeedDelta: 1.4,
     speedGain: 0.08,
     gapGain: 0.34,
@@ -64,6 +80,7 @@ const PERSONALITIES: TrafficPersonality[] = [
     feedforwardWeight: 0.9,
     steeringGain: 0.28,
     headingGain: 0.88,
+    lateralVelocityShare: 0.38,
     color: '#a9bed0',
   },
   {
@@ -76,6 +93,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     laneChangeLookahead: 55,
     laneChangeEagerness: 0.82,
     laneChangeCooldown: 3.6,
+    laneChangeMaxLateralVelocity: 1.65,
+    laneChangeFrontGap: 9.5,
+    laneChangeRearGap: 10.5,
+    laneChangeTimeBuffer: 0.28,
     overtakeSpeedDelta: 0.8,
     speedGain: 0.105,
     gapGain: 0.42,
@@ -83,6 +104,7 @@ const PERSONALITIES: TrafficPersonality[] = [
     feedforwardWeight: 1,
     steeringGain: 0.32,
     headingGain: 0.98,
+    lateralVelocityShare: 0.5,
     color: '#8ea6ff',
   },
   {
@@ -95,6 +117,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     laneChangeLookahead: 48,
     laneChangeEagerness: 0.58,
     laneChangeCooldown: 5.4,
+    laneChangeMaxLateralVelocity: 1.55,
+    laneChangeFrontGap: 10.5,
+    laneChangeRearGap: 11.5,
+    laneChangeTimeBuffer: 0.34,
     overtakeSpeedDelta: 1,
     speedGain: 0.12,
     gapGain: 0.42,
@@ -102,6 +128,7 @@ const PERSONALITIES: TrafficPersonality[] = [
     feedforwardWeight: 1,
     steeringGain: 0.26,
     headingGain: 1,
+    lateralVelocityShare: 0.5,
     color: '#f0b56a',
   },
   {
@@ -114,6 +141,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     laneChangeLookahead: 30,
     laneChangeEagerness: 0.18,
     laneChangeCooldown: 10,
+    laneChangeMaxLateralVelocity: 0.82,
+    laneChangeFrontGap: 20,
+    laneChangeRearGap: 23,
+    laneChangeTimeBuffer: 0.78,
     overtakeSpeedDelta: 2.8,
     speedGain: 0.052,
     gapGain: 0.2,
@@ -121,6 +152,7 @@ const PERSONALITIES: TrafficPersonality[] = [
     feedforwardWeight: 0.68,
     steeringGain: 0.2,
     headingGain: 0.72,
+    lateralVelocityShare: 0.12,
     color: '#82dec1',
   },
   {
@@ -133,6 +165,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     laneChangeLookahead: 36,
     laneChangeEagerness: 0.34,
     laneChangeCooldown: 7.2,
+    laneChangeMaxLateralVelocity: 1.05,
+    laneChangeFrontGap: 15,
+    laneChangeRearGap: 17,
+    laneChangeTimeBuffer: 0.58,
     overtakeSpeedDelta: 1.8,
     speedGain: 0.055,
     gapGain: 0.26,
@@ -140,6 +176,7 @@ const PERSONALITIES: TrafficPersonality[] = [
     feedforwardWeight: 0.78,
     steeringGain: 0.22,
     headingGain: 0.78,
+    lateralVelocityShare: 0.28,
     color: '#c9b4ff',
   },
 ];
@@ -163,11 +200,16 @@ export function createTrafficPersonality(rng: SeededRandom, density: number): Tr
     laneChangeLookahead: clamp(profile.laneChangeLookahead + rng.range(-5, 5), 24, 62),
     laneChangeEagerness: clamp(profile.laneChangeEagerness + rng.range(-0.08, 0.08), 0.05, 0.95),
     laneChangeCooldown: clamp(profile.laneChangeCooldown + rng.range(-0.8, 0.8), 2.8, 11),
+    laneChangeMaxLateralVelocity: clamp(profile.laneChangeMaxLateralVelocity * (1 + variation * 0.08), 0.7, 1.85),
+    laneChangeFrontGap: clamp(profile.laneChangeFrontGap * gapScale + rng.range(-1.2, 1.2), 7, 24),
+    laneChangeRearGap: clamp(profile.laneChangeRearGap * gapScale + rng.range(-1.5, 1.5), 8, 28),
+    laneChangeTimeBuffer: clamp(profile.laneChangeTimeBuffer + rng.range(-0.06, 0.06), 0.2, 0.9),
     speedGain: clamp(profile.speedGain * responseScale, 0.035, 0.14),
     gapGain: clamp(profile.gapGain * responseScale, 0.16, 0.58),
     brakeGain: clamp(profile.brakeGain * responseScale, 0.045, 0.16),
     steeringGain: clamp(profile.steeringGain * steeringScale, 0.16, 0.34),
     headingGain: clamp(profile.headingGain * steeringScale, 0.58, 1.1),
+    laneControlModel: rng.chance(profile.lateralVelocityShare) ? 'lateralVelocity' : 'clampedLateral',
     variation,
   };
 }
