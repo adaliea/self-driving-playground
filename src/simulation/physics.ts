@@ -52,7 +52,7 @@ export function applyVehiclePhysics(
   vehicle.lateral += lateralDelta;
   vehicle.headingOffset = normalizeAngle(vehicle.headingOffset + yawRate * dt - roadSample.curvature * forwardDelta);
 
-  const roadLimit = road.getRoadHalfWidth() + 1.25;
+  const roadLimit = Math.max(0.1, road.getRoadHalfWidth() - vehicle.width / 2 - 0.03);
   if (vehicle.lateral < -roadLimit) {
     vehicle.lateral = -roadLimit;
     vehicle.headingOffset = Math.max(vehicle.headingOffset, 0.03);

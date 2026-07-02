@@ -21,7 +21,7 @@ Headless traffic/personality report:
 npm run traffic:report -- --density 0.9 --runs 3 --seconds 90 --warmup 15 --start-speed 24
 ```
 
-This runs built-in traffic outside the user-code runner and reports traffic wave strength, speed spread, physical clearance, lane-keeping quality, flow, collision events, hard braking events, lane changes, and per-personality behavior. Use `--json` for machine-readable output.
+This runs built-in traffic outside the user-code runner and reports traffic wave strength, speed spread, physical clearance, lane-keeping quality, assigned-lane exits, road exits, flow, collision events, hard braking events, lane changes, and per-personality behavior. Use `--noisy-lanes`, `--noisy-vehicles`, `--actuator-variation`, or `--json` for alternate test modes.
 
 ## Project Structure
 
@@ -71,8 +71,9 @@ Current limitations:
 - Vehicles use Frenet-like coordinates over the road centerline.
 - Longitudinal dynamics include nonlinear acceleration, braking, and drag.
 - Steering has actuator smoothing and road-curvature-relative heading dynamics.
-- Traffic uses the same normalized controller output shape as ego controllers, with built-in lane centering, adaptive speed control, target-lane changes, and varied driving personalities.
-- Sensors produce ego-relative bounding boxes and lane-line samples, with optional jitter, missing samples, degraded confidence, and smoothing delay.
+- Traffic uses the same normalized controller output shape as ego controllers, with built-in lane centering, adaptive speed control, target-lane changes, varied driving personalities, and mixed lane-control models.
+- Ego assist uses the same user-facing sensor inputs as user code, but runs stronger lateral-velocity lane keeping and adaptive cruise controllers.
+- Sensors produce ego-relative bounding boxes and lane-line samples, with optional distance-scaled jitter, missing samples, degraded confidence, and smoothing delay. Lane-line sampling is denser near the ego vehicle.
 
 Known simplifications:
 

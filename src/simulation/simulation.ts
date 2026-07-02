@@ -1,6 +1,12 @@
 import type { AutopilotInput, PlaygroundSettings, SanitizedAutopilotOutput } from '../types';
 import type { RenderPoint, RenderSnapshot } from '../rendering/types';
-import { builtInLaneCentering, builtInSpeedControl, sanitizeAutopilotOutput, trafficAutopilot } from './controllers';
+import {
+  builtInAssistLaneKeeping,
+  builtInAssistSpeedControl,
+  builtInLaneCentering,
+  sanitizeAutopilotOutput,
+  trafficAutopilot,
+} from './controllers';
 import { applyVehiclePhysics } from './physics';
 import { Road } from './road';
 import { SeededRandom } from './random';
@@ -16,6 +22,9 @@ const TRAFFIC_MAX_COUNT = 132;
 const TRAFFIC_BACK_BUFFER = 250;
 const TRAFFIC_FRONT_BUFFER = 820;
 const TRAFFIC_MIN_SPAWN_GAP = 10;
+const COLLISION_LENGTH_INSET = 0.18;
+const COLLISION_WIDTH_INSET = 0.12;
+const COLLISION_VISUAL_OVERLAP = 0.08;
 
 export interface SimulationVehicleDebug {
   id: string;
@@ -33,12 +42,26 @@ export interface SimulationVehicleDebug {
   commandSteering: number;
   collision: boolean;
   personality?: string;
+  laneControlModel?: string;
 }
 
 export interface SimulationDebugState {
   time: number;
   collisions: number;
   vehicles: SimulationVehicleDebug[];
+}
+
+interface CollisionAxis {
+  x: number;
+  y: number;
+}
+
+interface CollisionRect {
+  center: CollisionAxis;
+  forward: CollisionAxis;
+  right: CollisionAxis;
+  halfLength: number;
+  halfWidth: number;
 }
 
 export class Simulation {
@@ -144,8 +167,8 @@ export class Simulation {
     const user = sanitizeAutopilotOutput(rawUserOutput, ego.targetLane, this.road.laneCount);
     ego.targetLane = user.targetLane;
 
-    const assistMotor = builtInSpeedControl(this.lastEgoInput, ego.desiredSpeed);
-    const assistSteering = builtInLaneCentering(ego, this.road, ego.targetLane);
+    const assistMotor = builtInAssistSpeedControl(this.lastEgoInput, Math.max(ego.desiredSpeed, 31));
+    const assistSteering = builtInAssistLaneKeeping(this.lastEgoInput);
     const finalOutput: SanitizedAutopilotOutput = {
       ...user,
       motor: settings.accelerateAssist ? assistMotor : user.motor,
@@ -280,6 +303,7 @@ export class Simulation {
         commandSteering: vehicle.commandSteering,
         collision: vehicle.collision,
         personality: vehicle.personality?.label,
+        laneControlModel: vehicle.personality?.laneControlModel,
       })),
     };
   }
@@ -400,17 +424,21 @@ export class Simulation {
         const lateralGap = Math.abs(ahead.lateral - behind.lateral);
         const bodyHalfWidth = (behind.width + ahead.width) / 2;
         const bodyHalfLength = (behind.length + ahead.length) / 2;
-        const bodiesOverlap = gap < bodyHalfLength && lateralGap < bodyHalfWidth;
+        const sameTravelPath = lateralGap < bodyHalfWidth + 0.35;
+        if (!sameTravelPath) continue;
 
+        const bodiesOverlap = gap < bodyHalfLength && this.vehicleBodiesOverlap(behind, ahead);
         if (bodiesOverlap) {
           behind.collision = true;
           ahead.collision = true;
           if (behind.kind === 'ego' || ahead.kind === 'ego') egoCollisionThisStep = true;
+          behind.s = Math.min(behind.s, ahead.s - Math.max(0.1, bodyHalfLength - COLLISION_VISUAL_OVERLAP));
+          behind.speed = Math.min(behind.speed, ahead.speed * 0.96);
+          continue;
         }
 
-        const sameTravelPath = lateralGap < bodyHalfWidth + 0.35;
         const softFollowingGap = bodyHalfLength + 1.05;
-        if (sameTravelPath && gap < softFollowingGap) {
+        if (gap < softFollowingGap) {
           behind.s = Math.min(behind.s, ahead.s - softFollowingGap);
           behind.speed = Math.min(behind.speed, ahead.speed * 0.985);
         }
@@ -419,6 +447,32 @@ export class Simulation {
 
     if (egoCollisionThisStep && !this.egoCollisionActive) this.collisions += 1;
     this.egoCollisionActive = egoCollisionThisStep;
+  }
+
+  private vehicleBodiesOverlap(a: VehicleState, b: VehicleState): boolean {
+    const rectA = this.vehicleCollisionRect(a);
+    const rectB = this.vehicleCollisionRect(b);
+    const axes = [rectA.forward, rectA.right, rectB.forward, rectB.right];
+
+    for (const axis of axes) {
+      const projectionA = projectCollisionRect(rectA, axis);
+      const projectionB = projectCollisionRect(rectB, axis);
+      if (projectionA.max < projectionB.min || projectionB.max < projectionA.min) return false;
+    }
+
+    return true;
+  }
+
+  private vehicleCollisionRect(vehicle: VehicleState): CollisionRect {
+    const pose = this.road.worldPointAt(vehicle.s, vehicle.lateral);
+    const heading = pose.heading + vehicle.headingOffset;
+    return {
+      center: { x: pose.x, y: pose.y },
+      forward: { x: Math.sin(heading), y: Math.cos(heading) },
+      right: { x: Math.cos(heading), y: -Math.sin(heading) },
+      halfLength: Math.max(0.1, vehicle.length / 2 - COLLISION_LENGTH_INSET),
+      halfWidth: Math.max(0.1, vehicle.width / 2 - COLLISION_WIDTH_INSET),
+    };
   }
 
   private targetTrafficCount(settings: PlaygroundSettings): number {
@@ -491,4 +545,16 @@ export class Simulation {
     }
     return points;
   }
+}
+
+function projectCollisionRect(rect: CollisionRect, axis: CollisionAxis): { min: number; max: number } {
+  const center = rect.center.x * axis.x + rect.center.y * axis.y;
+  const radius =
+    Math.abs(rect.forward.x * axis.x + rect.forward.y * axis.y) * rect.halfLength +
+    Math.abs(rect.right.x * axis.x + rect.right.y * axis.y) * rect.halfWidth;
+
+  return {
+    min: center - radius,
+    max: center + radius,
+  };
 }
