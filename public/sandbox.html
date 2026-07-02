@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline' blob:; worker-src blob:; connect-src 'none'; img-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none';"
+    />
+    <title>Autopilot Sandbox</title>
+  </head>
+  <body>
+    <script>
+      (() => {
+        'use strict';
+
+        let currentCode = '';
+        let currentVersion = 0;
+        let worker = null;
+        const pending = new Map();
+
+        const send = (message) => parent.postMessage(message, '*');
+
+        const isRecord = (value) => typeof value === 'object' && value !== null;
+        const isLoadMessage = (value) =>
+          isRecord(value) && value.type === 'load-code' && typeof value.version === 'number' && typeof value.js === 'string';
+        const isRunMessage = (value) =>
+          isRecord(value) &&
+          value.type === 'run-autopilot' &&
+          typeof value.id === 'number' &&
+          typeof value.timeoutMs === 'number' &&
+          isRecord(value.input);
+
+        const terminateWorker = () => {
+          if (worker) worker.terminate();
+          worker = null;
+          for (const [id, record] of pending) {
+            clearTimeout(record.timer);
+            send({ type: 'run-error', id, message: 'Autopilot code was restarted.' });
+          }
+          pending.clear();
+        };
+
+        const createWorker = (code, version) => {
+          terminateWorker();
+          currentCode = code;
+          currentVersion = version;
+
+          const workerSource = `
+            'use strict';
+            const __sandboxSend = self.postMessage.bind(self);
+            const __blocked = () => { throw new Error('Network, storage, and import APIs are disabled for autopilot code.'); };
+            const __defineBlocked = (name, value) => {
+              try { Object.defineProperty(self, name, { value, writable: false, configurable: false }); } catch (_) { try { self[name] = value; } catch (_) {} }
+            };
+            __defineBlocked('fetch', __blocked);
+            __defineBlocked('XMLHttpRequest', undefined);
+            __defineBlocked('WebSocket', undefined);
+            __defineBlocked('EventSource', undefined);
+            __defineBlocked('importScripts', __blocked);
+            __defineBlocked('localStorage', undefined);
+            __defineBlocked('sessionStorage', undefined);
+            __defineBlocked('indexedDB', undefined);
+            __defineBlocked('caches', undefined);
+            let __autopilot = null;
+            try {
+              __autopilot = (() => {
+                const exports = {};
+                const module = { exports };
+                const require = __blocked;
+                const fetch = __blocked;
+                const XMLHttpRequest = undefined;
+                const WebSocket = undefined;
+                const EventSource = undefined;
+                const importScripts = __blocked;
+                const localStorage = undefined;
+                const sessionStorage = undefined;
+                const indexedDB = undefined;
+                const caches = undefined;
+                const postMessage = undefined;
+                ${code}
+                return module.exports.autopilot || exports.autopilot || (typeof autopilot === 'function' ? autopilot : undefined);
+              })();
+              if (typeof __autopilot !== 'function') {
+                throw new Error('User code must export or define function autopilot(input).');
+              }
+              __sandboxSend({ type: 'worker-loaded' });
+            } catch (error) {
+              __sandboxSend({
+                type: 'worker-load-error',
+                message: error && error.message ? String(error.message) : String(error),
+                stack: error && error.stack ? String(error.stack) : undefined
+              });
+            }
+
+            self.onmessage = (event) => {
+              const message = event.data;
+              if (!message || message.type !== 'run-autopilot' || typeof message.id !== 'number') return;
+              if (typeof __autopilot !== 'function') {
+                __sandboxSend({ type: 'worker-error', id: message.id, message: 'Autopilot function is not loaded.' });
+                return;
+              }
+              const started = performance.now();
+              try {
+                const output = __autopilot(message.input);
+                __sandboxSend({
+                  type: 'worker-result',
+                  id: message.id,
+                  output,
+                  durationMs: performance.now() - started
+                });
+              } catch (error) {
+                __sandboxSend({
+                  type: 'worker-error',
+                  id: message.id,
+                  message: error && error.message ? String(error.message) : String(error),
+                  stack: error && error.stack ? String(error.stack) : undefined
+                });
+              }
+            };
+          `;
+
+          const blob = new Blob([workerSource], { type: 'text/javascript' });
+          const url = URL.createObjectURL(blob);
+          worker = new Worker(url);
+          URL.revokeObjectURL(url);
+
+          worker.onmessage = (event) => {
+            const message = event.data;
+            if (!isRecord(message) || typeof message.type !== 'string') return;
+            if (message.type === 'worker-loaded') {
+              send({ type: 'code-loaded', version });
+              return;
+            }
+            if (message.type === 'worker-load-error') {
+              send({ type: 'code-load-error', version, message: String(message.message || 'Unable to load user code.') });
+              return;
+            }
+            if (message.type === 'worker-result') {
+              const record = pending.get(message.id);
+              if (record) {
+                clearTimeout(record.timer);
+                pending.delete(message.id);
+              }
+              send({ type: 'run-result', id: message.id, output: message.output, durationMs: Number(message.durationMs || 0) });
+              return;
+            }
+            if (message.type === 'worker-error') {
+              const record = pending.get(message.id);
+              if (record) {
+                clearTimeout(record.timer);
+                pending.delete(message.id);
+              }
+              send({ type: 'run-error', id: message.id, message: String(message.message || 'Runtime error.'), stack: message.stack });
+            }
+          };
+
+          worker.onerror = (event) => {
+            send({ type: 'code-load-error', version, message: event.message || 'Worker script failed.' });
+          };
+        };
+
+        window.addEventListener('message', (event) => {
+          const message = event.data;
+          if (isLoadMessage(message)) {
+            createWorker(message.js, message.version);
+            return;
+          }
+
+          if (isRunMessage(message)) {
+            if (!worker) {
+              send({ type: 'run-error', id: message.id, message: 'Autopilot code is not loaded.' });
+              return;
+            }
+
+            const timer = setTimeout(() => {
+              pending.delete(message.id);
+              terminateWorker();
+              if (currentCode) createWorker(currentCode, currentVersion);
+              send({ type: 'run-error', id: message.id, message: 'Autopilot exceeded the frame budget and was restarted.' });
+            }, Math.max(4, Math.min(100, message.timeoutMs)));
+
+            pending.set(message.id, { timer });
+            worker.postMessage({ type: 'run-autopilot', id: message.id, input: message.input });
+          }
+        });
+
+        send({ type: 'sandbox-ready' });
+      })();
+    </script>
+  </body>
+</html>
