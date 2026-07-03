@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@radix-ui/react-alert-dialog": "^1.1.18",
     "@vitejs/plugin-react": "^4.3.4",
     "lucide-react": "^0.468.0",
     "monaco-editor": "^0.52.0",

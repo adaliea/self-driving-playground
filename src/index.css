@@ -4,8 +4,28 @@
 
 :root {
   color-scheme: dark;
+  --radius: 0.625rem;
+  --background: 240 10% 3.9%;
+  --foreground: 240 5.9% 90%;
+  --card: 240 5.9% 10%;
+  --card-foreground: 240 5.9% 90%;
+  --popover: 240 5.9% 10%;
+  --popover-foreground: 240 5.9% 90%;
+  --primary: 240 5% 84%;
+  --primary-foreground: 240 5.9% 10%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 240 5.9% 90%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 240 5.9% 90%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 18.5%;
+  --ring: 240 4.9% 50%;
   font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  background: #071013;
+  background: hsl(var(--background));
 }
 
 * {
@@ -16,9 +36,8 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(109, 247, 209, 0.035), transparent 32rem),
-    #071013;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 button,
@@ -28,10 +47,15 @@ textarea {
   font: inherit;
 }
 
+button:not(:disabled),
+[role="button"]:not(:disabled) {
+  cursor: pointer;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid #6df7d1;
+  outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
 
@@ -41,15 +65,15 @@ select:focus-visible {
 }
 
 ::-webkit-scrollbar-track {
-  background: #071013;
+  background: hsl(var(--background));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #284147;
-  border: 2px solid #071013;
+  background: hsl(var(--muted));
+  border: 2px solid hsl(var(--background));
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #40636b;
+  background: hsl(var(--muted-foreground));
 }

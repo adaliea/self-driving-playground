@@ -1,27 +1,53 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Activity } from 'lucide-react';
 import type { RenderTelemetry } from './rendering';
 import { CanvasRenderer } from './rendering';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation } from './simulation';
 import { SandboxClient, compileUserCode } from './sandbox';
 import { controllerExamples, defaultControllerExample, toolboxSnippets } from './toolbox';
 import type { PlaygroundSettings } from './types';
-import { ControlPanel, EditorPanel, SimulatorCanvas, TelemetryPanel, ToolboxPanel } from './ui';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  ControlPanel,
+  EditorPanel,
+  SimulatorCanvas,
+  TelemetryPanel,
+  ToolboxPanel,
+} from './ui';
+
+const USER_CODE_STORAGE_KEY = 'self-driving-playground:user-code:v1';
+const SETTINGS_STORAGE_KEY = 'self-driving-playground:settings:v1';
+const USER_CODE_SAVE_DEBOUNCE_MS = 500;
+const SETTINGS_SAVE_DEBOUNCE_MS = 500;
+const CUSTOM_CONTROLLER_ID = 'custom';
+
+interface InitialController {
+  code: string;
+  selectedExampleId: string;
+}
 
 function App() {
-  const [settings, setSettings] = useState<PlaygroundSettings>(DEFAULT_SETTINGS);
+  const [initialController] = useState(loadInitialController);
+  const [settings, setSettings] = useState<PlaygroundSettings>(loadStoredSettings);
   const [running, setRunning] = useState(false);
-  const [code, setCode] = useState(defaultControllerExample.code);
-  const [selectedExampleId, setSelectedExampleId] = useState(defaultControllerExample.id);
+  const [code, setCode] = useState(initialController.code);
+  const [selectedExampleId, setSelectedExampleId] = useState(initialController.selectedExampleId);
+  const [pendingExampleId, setPendingExampleId] = useState<string>();
   const [compileErrors, setCompileErrors] = useState<string[]>([]);
   const [runtimeError, setRuntimeError] = useState<string>();
   const [codeStatus, setCodeStatus] = useState('Starting code runner');
 
   const simulationRef = useRef<Simulation>();
-  if (!simulationRef.current) simulationRef.current = new Simulation(DEFAULT_SETTINGS);
+  if (!simulationRef.current) simulationRef.current = new Simulation(settings);
 
   const [telemetry, setTelemetry] = useState<RenderTelemetry>(() =>
-    simulationRef.current!.getSnapshot(DEFAULT_SETTINGS).telemetry,
+    simulationRef.current!.getSnapshot(settings).telemetry,
   );
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,17 +55,40 @@ function App() {
   const sandboxRef = useRef<SandboxClient>();
   const settingsRef = useRef(settings);
   const runningRef = useRef(running);
+  const codeRef = useRef(code);
   const codeLoadedRef = useRef(false);
   const compileSequenceRef = useRef(0);
   const runtimeErrorRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     settingsRef.current = settings;
+    const timer = window.setTimeout(() => saveSettings(settings), SETTINGS_SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
   }, [settings]);
 
   useEffect(() => {
     runningRef.current = running;
   }, [running]);
+
+  useEffect(() => {
+    codeRef.current = code;
+    const timer = window.setTimeout(() => saveUserCode(code), USER_CODE_SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [code]);
+
+  useEffect(() => {
+    const flushStoredState = () => {
+      saveUserCode(codeRef.current);
+      saveSettings(settingsRef.current);
+    };
+    window.addEventListener('pagehide', flushStoredState);
+    window.addEventListener('beforeunload', flushStoredState);
+
+    return () => {
+      window.removeEventListener('pagehide', flushStoredState);
+      window.removeEventListener('beforeunload', flushStoredState);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -201,38 +250,63 @@ function App() {
     runtimeErrorRef.current = undefined;
   }, []);
 
+  const updateSettings = useCallback((nextSettings: PlaygroundSettings) => {
+    settingsRef.current = nextSettings;
+    setSettings(nextSettings);
+  }, []);
+
+  const resetSettingsToDefaults = useCallback(() => {
+    const defaults = { ...DEFAULT_SETTINGS };
+    updateSettings(defaults);
+    simulationRef.current!.reset(defaults);
+    const snapshot = simulationRef.current!.getSnapshot(defaults);
+    rendererRef.current?.render(snapshot);
+    setTelemetry(snapshot.telemetry);
+  }, [updateSettings]);
+
+  const updateCode = useCallback((nextCode: string) => {
+    codeRef.current = nextCode;
+    setCode(nextCode);
+    setSelectedExampleId(findControllerExampleIdForCode(nextCode) ?? CUSTOM_CONTROLLER_ID);
+  }, []);
+
+  const applyExample = useCallback(
+    (example: (typeof controllerExamples)[number]) => {
+      setSelectedExampleId(example.id);
+      updateCode(example.code);
+      if (example.recommendedSettings) {
+        updateSettings({ ...settingsRef.current, ...example.recommendedSettings });
+      }
+    },
+    [updateCode, updateSettings],
+  );
+
   const loadExample = useCallback((id: string) => {
     const example = controllerExamples.find((candidate) => candidate.id === id);
     if (!example) return;
-    setSelectedExampleId(example.id);
-    setCode(example.code);
-    if (example.recommendedSettings) {
-      setSettings((current) => ({ ...current, ...example.recommendedSettings }));
+    if (wouldOverwriteEditedCode(codeRef.current, selectedExampleId, example.code)) {
+      setPendingExampleId(example.id);
+      return;
     }
-  }, []);
+
+    applyExample(example);
+  }, [applyExample, selectedExampleId]);
 
   const insertSnippet = useCallback((snippet: string) => {
-    setCode((current) => `${current.trimEnd()}\n\n${snippet}\n`);
+    setCode((current) => {
+      const nextCode = `${current.trimEnd()}\n\n${snippet}\n`;
+      codeRef.current = nextCode;
+      setSelectedExampleId(findControllerExampleIdForCode(nextCode) ?? CUSTOM_CONTROLLER_ID);
+      return nextCode;
+    });
   }, []);
 
-  return (
-    <div className="min-h-screen bg-ink text-slate-100">
-      <header className="border-b border-white/10 bg-[#050b0d] px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-md border border-mint/30 bg-mint/10 text-mint shadow-glow">
-              <Activity size={21} />
-            </div>
-            <div>
-              <h1 className="text-base font-semibold uppercase tracking-[0.28em] text-slate-100">Self-Driving Playground</h1>
-              <p className="mt-1 text-xs text-slate-500">PID loops, noisy perception, traffic, and imperfect actuation</p>
-            </div>
-          </div>
-        </div>
-      </header>
+  const pendingExample = controllerExamples.find((example) => example.id === pendingExampleId);
 
-      <main className="grid min-h-[calc(100vh-69px)] min-w-0 grid-cols-1 lg:grid-cols-2">
-        <div className="grid min-h-[620px] min-w-0 border-r border-white/10 lg:h-[calc(100vh-69px)]">
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <main className="grid min-h-screen min-w-0 grid-cols-1 lg:grid-cols-2">
+        <div className="grid min-h-[620px] min-w-0 border-r border-border lg:h-screen">
           <EditorPanel
             code={code}
             examples={controllerExamples}
@@ -240,23 +314,47 @@ function App() {
             compileErrors={compileErrors}
             codeStatus={codeStatus}
             toolbox={<ToolboxPanel snippets={toolboxSnippets} onInsert={insertSnippet} />}
-            onCodeChange={setCode}
+            onCodeChange={updateCode}
             onLoadExample={loadExample}
           />
         </div>
 
-        <div className="flex min-h-[620px] min-w-0 flex-col lg:h-[calc(100vh-69px)]">
+        <div className="flex min-h-[620px] min-w-0 flex-col lg:h-screen">
           <ControlPanel
             running={running}
             settings={settings}
             onRunningChange={setRunning}
             onReset={resetSimulation}
-            onSettingsChange={setSettings}
+            onResetSettings={resetSettingsToDefaults}
+            onSettingsChange={updateSettings}
           />
           <SimulatorCanvas ref={canvasRef} />
           <TelemetryPanel telemetry={telemetry} compileErrors={compileErrors} runtimeError={runtimeError} />
         </div>
       </main>
+
+      <AlertDialog open={Boolean(pendingExample)} onOpenChange={(open) => !open && setPendingExampleId(undefined)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace Autopilot.ts?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Loading {pendingExample ? `"${pendingExample.title}"` : 'this example'} will replace your current controller code.
+              Your current code is saved in this browser until you continue.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep current code</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingExample) applyExample(pendingExample);
+                setPendingExampleId(undefined);
+              }}
+            >
+              Replace code
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -268,6 +366,84 @@ function formatError(error: unknown): string {
 
 function formatRunnerError(error: unknown): string {
   return formatError(error).replace(/sandbox/gi, 'code runner').replace(/worker/gi, 'code runner');
+}
+
+function loadInitialController(): InitialController {
+  const code = loadStoredUserCode();
+  return {
+    code,
+    selectedExampleId: findControllerExampleIdForCode(code) ?? CUSTOM_CONTROLLER_ID,
+  };
+}
+
+function loadStoredUserCode(): string {
+  try {
+    const storedCode = window.localStorage.getItem(USER_CODE_STORAGE_KEY);
+    return storedCode ?? defaultControllerExample.code;
+  } catch {
+    return defaultControllerExample.code;
+  }
+}
+
+function loadStoredSettings(): PlaygroundSettings {
+  try {
+    const rawSettings = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!rawSettings) return { ...DEFAULT_SETTINGS };
+
+    const parsed = JSON.parse(rawSettings) as Record<string, unknown>;
+    return {
+      seed: finiteNumberOr(parsed.seed, DEFAULT_SETTINGS.seed),
+      trafficDensity: boundedNumberOr(parsed.trafficDensity, DEFAULT_SETTINGS.trafficDensity, 0, 1),
+      startingSpeed: boundedNumberOr(parsed.startingSpeed, DEFAULT_SETTINGS.startingSpeed, 8, 34),
+      noisyLaneLines: booleanOr(parsed.noisyLaneLines, DEFAULT_SETTINGS.noisyLaneLines),
+      noisyVehicles: booleanOr(parsed.noisyVehicles, DEFAULT_SETTINGS.noisyVehicles),
+      actuatorVariation: booleanOr(parsed.actuatorVariation, DEFAULT_SETTINGS.actuatorVariation),
+      debugOverlays: booleanOr(parsed.debugOverlays, DEFAULT_SETTINGS.debugOverlays),
+      steerAssist: booleanOr(parsed.steerAssist, DEFAULT_SETTINGS.steerAssist),
+      accelerateAssist: booleanOr(parsed.accelerateAssist, DEFAULT_SETTINGS.accelerateAssist),
+    };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveUserCode(code: string): void {
+  try {
+    window.localStorage.setItem(USER_CODE_STORAGE_KEY, code);
+  } catch {
+    // Ignore storage errors, such as private browsing restrictions or quota limits.
+  }
+}
+
+function saveSettings(settings: PlaygroundSettings): void {
+  try {
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore storage errors, such as private browsing restrictions or quota limits.
+  }
+}
+
+function findControllerExampleIdForCode(code: string): string | undefined {
+  return controllerExamples.find((example) => example.code === code)?.id;
+}
+
+function wouldOverwriteEditedCode(currentCode: string, selectedId: string, nextCode: string): boolean {
+  if (currentCode === nextCode) return false;
+  const selectedExample = controllerExamples.find((example) => example.id === selectedId);
+  return !selectedExample || currentCode !== selectedExample.code;
+}
+
+function finiteNumberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function boundedNumberOr(value: unknown, fallback: number, min: number, max: number): number {
+  const number = finiteNumberOr(value, fallback);
+  return Math.max(min, Math.min(max, number));
+}
+
+function booleanOr(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
 }
 
 export default App;
