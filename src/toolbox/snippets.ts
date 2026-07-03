@@ -228,6 +228,31 @@ const laneError = lane.centerOffset + lane.heading * 2.5;`,
 const motor = accelerationFeedforward(targetSpeed, input.ego.speed);`,
   },
   {
+    id: 'curve-regression',
+    title: 'Curve Regression Helper',
+    category: 'Perception',
+    description:
+      'Uses the built-in weighted lane regression helper to estimate center offset, heading, and curvature on sharper turns.',
+    implementation: `function analyzeTargetLane(input: AutopilotInput): LaneAnalysis {
+  const relativeTargetLane = input.targetLane - input.ego.laneIndex;
+  return analyzeLaneRegression(input.laneLines, relativeTargetLane);
+}
+
+function curvatureSteeringFeedforward(
+  lane: LaneAnalysis,
+  speed: number
+): number {
+  const steeringScale = Math.max(0.08, Math.min(1, speed / 22));
+  const feedforward = (lane.curvature * speed) / Math.max(0.08, 0.68 * steeringScale);
+  return clamp(feedforward, -0.4, 0.4);
+}`,
+    usage: `const lane = analyzeTargetLane(input);
+const laneError = lane.centerOffset + lane.heading * 2.0;
+const feedback = lanePid.update(laneError, input.dt);
+const feedforward = curvatureSteeringFeedforward(lane, input.ego.speed);
+const steering = clamp(feedback + feedforward, -1, 1);`,
+  },
+  {
     id: 'adaptive-cruise',
     title: 'Adaptive Cruise Snippet',
     category: 'Following',
