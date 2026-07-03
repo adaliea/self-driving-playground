@@ -1,11 +1,11 @@
 import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react';
-import { Code2, FileCode2 } from 'lucide-react';
-import { useRef, type ReactNode } from 'react';
+import { Code2, FileCode2, Wrench } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { editor } from 'monaco-editor';
 import * as monacoEditor from 'monaco-editor';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import TypeScriptWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
-import type { ControllerExample } from '../toolbox';
+import { toolboxLibrarySource, type ControllerExample } from '../toolbox';
 import { publicAutopilotDts } from '../types/publicDts';
 
 type MonacoWorkerGlobal = typeof self & {
@@ -24,6 +24,23 @@ type MonacoWorkerGlobal = typeof self & {
 loader.config({ monaco: monacoEditor });
 
 type MonacoApi = Parameters<BeforeMount>[0];
+
+const autopilotModelUri = 'file:///autopilot.ts';
+const autopilotApiDtsUri = 'file:///autopilot-api.d.ts';
+const toolboxModelUri = 'file:///autopilot-toolbox.ts';
+
+type ActiveEditorFile = 'autopilot' | 'toolbox';
+type EditorLocation =
+  | {
+      lineNumber: number;
+      column: number;
+    }
+  | {
+      startLineNumber: number;
+      startColumn: number;
+      endLineNumber?: number;
+      endColumn?: number;
+    };
 
 const autopilotHoverDocs: Record<string, string> = {
   AutopilotInput: [
@@ -104,6 +121,41 @@ const autopilotHoverDocs: Record<string, string> = {
     '',
     'Use it when sharp turns or noisy lane-line samples make a simple three-point lane estimate too jumpy.',
   ].join('\n'),
+  clamp: [
+    '**clamp(value, min, max)**',
+    '',
+    'Toolbox helper from `autopilot-toolbox.ts`.',
+    '',
+    'Constrains a number to the provided minimum and maximum values.',
+  ].join('\n'),
+  createPidController: [
+    '**createPidController(options)**',
+    '',
+    'Toolbox helper from `autopilot-toolbox.ts`.',
+    '',
+    'Creates a stateful PID controller with output limits, optional integral limits, reset, and debug terms.',
+  ].join('\n'),
+  analyzeLane: [
+    '**analyzeLane(laneLines)**',
+    '',
+    'Toolbox helper from `autopilot-toolbox.ts`.',
+    '',
+    'Interprets detected lane lines into center offset, heading, curvature, and confidence.',
+  ].join('\n'),
+  accelerationFeedforward: [
+    '**accelerationFeedforward(targetSpeed, currentSpeed)**',
+    '',
+    'Toolbox helper from `autopilot-toolbox.ts`.',
+    '',
+    'Estimates a motor command from speed error plus simple drag compensation.',
+  ].join('\n'),
+  adaptiveCruiseTargetSpeed: [
+    '**adaptiveCruiseTargetSpeed(input, freeRoadSpeed)**',
+    '',
+    'Toolbox helper from `autopilot-toolbox.ts`.',
+    '',
+    'Reduces target speed when the closest vehicle ahead is inside the desired following gap.',
+  ].join('\n'),
   PidDebugTerms: [
     '**PidDebugTerms**',
     '',
@@ -121,6 +173,7 @@ const autopilotHoverDocs: Record<string, string> = {
 };
 
 let autopilotHoverProviderRegistered = false;
+let publicAutopilotDtsRegistered = false;
 
 function registerAutopilotHoverProvider(monaco: MonacoApi): void {
   if (autopilotHoverProviderRegistered) return;
@@ -140,6 +193,48 @@ function registerAutopilotHoverProvider(monaco: MonacoApi): void {
       };
     },
   });
+}
+
+function registerPublicAutopilotDts(monaco: MonacoApi): void {
+  if (publicAutopilotDtsRegistered) return;
+  publicAutopilotDtsRegistered = true;
+  monaco.languages.typescript.typescriptDefaults.addExtraLib(publicAutopilotDts, autopilotApiDtsUri);
+}
+
+function ensureToolboxModel(monaco: MonacoApi): void {
+  const uri = monaco.Uri.parse(toolboxModelUri);
+  const existing = monaco.editor.getModel(uri);
+  if (existing) {
+    if (existing.getValue() !== toolboxLibrarySource) existing.setValue(toolboxLibrarySource);
+    return;
+  }
+
+  monaco.editor.createModel(toolboxLibrarySource, 'typescript', uri);
+}
+
+function editorFileForUri(resource: monacoEditor.Uri): ActiveEditorFile | undefined {
+  if (resource.toString() === toolboxModelUri || resource.path === '/autopilot-toolbox.ts') return 'toolbox';
+  if (resource.toString() === autopilotModelUri || resource.path === '/autopilot.ts') return 'autopilot';
+  return undefined;
+}
+
+function revealEditorLocation(editorInstance: editor.ICodeEditor, location?: EditorLocation): void {
+  if (!location) return;
+
+  if ('startLineNumber' in location) {
+    const range = {
+      startLineNumber: location.startLineNumber,
+      startColumn: location.startColumn,
+      endLineNumber: location.endLineNumber ?? location.startLineNumber,
+      endColumn: location.endColumn ?? location.startColumn,
+    };
+    editorInstance.setSelection(range);
+    editorInstance.revealRangeInCenter(range);
+    return;
+  }
+
+  editorInstance.setPosition(location);
+  editorInstance.revealPositionInCenter(location);
 }
 
 interface EditorPanelProps {
@@ -164,6 +259,11 @@ export function EditorPanel({
   onLoadExample,
 }: EditorPanelProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const editorOpenerRef = useRef<monacoEditor.IDisposable | null>(null);
+  const pendingRevealRef = useRef<EditorLocation>();
+  const [activeFile, setActiveFile] = useState<ActiveEditorFile>('autopilot');
+  const isToolboxActive = activeFile === 'toolbox';
+  const hasSelectedExample = examples.some((example) => example.id === selectedExampleId);
 
   const beforeMount: BeforeMount = (monaco) => {
     monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
@@ -174,55 +274,136 @@ export function EditorPanel({
       noEmit: true,
       isolatedModules: true,
     });
-    monaco.languages.typescript.typescriptDefaults.addExtraLib(publicAutopilotDts, 'ts:autopilot-api.d.ts');
+    registerPublicAutopilotDts(monaco);
+    ensureToolboxModel(monaco);
     registerAutopilotHoverProvider(monaco);
     monaco.editor.defineTheme('autopilot-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
-        { token: 'comment', foreground: '72838a' },
-        { token: 'keyword', foreground: '89a9ff' },
-        { token: 'number', foreground: 'f7c86d' },
-        { token: 'string', foreground: '82dec1' },
+        { token: 'comment', foreground: '71717a' },
+        { token: 'keyword', foreground: '93c5fd' },
+        { token: 'number', foreground: 'fde68a' },
+        { token: 'string', foreground: '86efac' },
       ],
       colors: {
-        'editor.background': '#071013',
-        'editor.foreground': '#d7e5e4',
-        'editorLineNumber.foreground': '#395057',
-        'editorLineNumber.activeForeground': '#6df7d1',
-        'editor.selectionBackground': '#26484d',
-        'editorCursor.foreground': '#6df7d1',
+        'editor.background': '#09090b',
+        'editor.foreground': '#fafafa',
+        'editorLineNumber.foreground': '#71717a',
+        'editorLineNumber.activeForeground': '#fafafa',
+        'editor.selectionBackground': '#27272a',
+        'editorCursor.foreground': '#fafafa',
       },
     });
   };
 
   const onMount: OnMount = (editorInstance) => {
     editorRef.current = editorInstance;
+    editorOpenerRef.current?.dispose();
+    editorOpenerRef.current = monacoEditor.editor.registerEditorOpener({
+      openCodeEditor(_source, resource, selectionOrPosition) {
+        const nextFile = editorFileForUri(resource);
+        if (!nextFile) return false;
+
+        setActiveFile(nextFile);
+        pendingRevealRef.current = selectionOrPosition;
+        window.requestAnimationFrame(() => {
+          const currentEditor = editorRef.current;
+          const currentFile = currentEditor?.getModel() ? editorFileForUri(currentEditor.getModel()!.uri) : undefined;
+          if (currentEditor && currentFile === nextFile && pendingRevealRef.current) {
+            revealEditorLocation(currentEditor, pendingRevealRef.current);
+            pendingRevealRef.current = undefined;
+          }
+        });
+        return true;
+      },
+    });
   };
 
+  useEffect(() => {
+    if (!pendingRevealRef.current) return undefined;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      const currentEditor = editorRef.current;
+      const currentFile = currentEditor?.getModel() ? editorFileForUri(currentEditor.getModel()!.uri) : undefined;
+      if (currentEditor && currentFile === activeFile && pendingRevealRef.current) {
+        revealEditorLocation(currentEditor, pendingRevealRef.current);
+        pendingRevealRef.current = undefined;
+      }
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [activeFile]);
+
+  useEffect(() => {
+    return () => {
+      editorOpenerRef.current?.dispose();
+      editorOpenerRef.current = null;
+    };
+  }, []);
+
   return (
-    <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden bg-panel">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Code2 className="text-mint" size={18} />
-          <h2 className="text-sm font-semibold uppercase tracking-[0.22em] text-slate-100">Autopilot.ts</h2>
+    <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden bg-background">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-1 rounded-md border border-border bg-muted/50 p-1" role="tablist" aria-label="Editor files">
+          <button
+            type="button"
+            onClick={() => setActiveFile('autopilot')}
+            className={`inline-flex h-8 items-center gap-2 rounded px-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
+              activeFile === 'autopilot'
+                ? 'bg-blue-500/10 text-blue-100 shadow-sm ring-1 ring-blue-500/20'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+            }`}
+            role="tab"
+            aria-selected={activeFile === 'autopilot'}
+          >
+            <Code2 size={14} />
+            Autopilot.ts
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveFile('toolbox')}
+            className={`inline-flex h-8 items-center gap-2 rounded px-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
+              activeFile === 'toolbox'
+                ? 'bg-amber-500/10 text-amber-100 shadow-sm ring-1 ring-amber-500/20'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+            }`}
+            role="tab"
+            aria-selected={activeFile === 'toolbox'}
+          >
+            <Wrench size={14} />
+            Toolbox.ts
+          </button>
         </div>
         <div className="flex items-center gap-2">
-          {toolbox}
-          <label className="flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2 py-1.5 text-xs text-slate-400">
-            <FileCode2 size={14} />
-            <select
-              value={selectedExampleId}
-              onChange={(event) => onLoadExample(event.target.value)}
-              className="max-w-56 bg-transparent text-slate-100 outline-none"
-            >
-              {examples.map((example) => (
-                <option key={example.id} value={example.id} className="bg-panel text-slate-100">
-                  {example.title}
-                </option>
-              ))}
-            </select>
-          </label>
+          {isToolboxActive ? (
+            <span className="inline-flex h-8 items-center rounded-md border border-amber-500/20 bg-amber-500/10 px-3 text-xs font-semibold text-amber-100">
+              Read-only
+            </span>
+          ) : (
+            <>
+              {toolbox}
+              <label className="flex items-center gap-2 rounded-md border border-input bg-background px-2 py-1.5 text-xs text-muted-foreground shadow-sm">
+                <FileCode2 size={14} />
+                <select
+                  value={selectedExampleId}
+                  onChange={(event) => onLoadExample(event.target.value)}
+                  className="max-w-56 bg-transparent text-foreground outline-none"
+                >
+                  {!hasSelectedExample ? (
+                    <option value={selectedExampleId} className="bg-popover text-popover-foreground">
+                      Custom saved code
+                    </option>
+                  ) : null}
+                  {examples.map((example) => (
+                    <option key={example.id} value={example.id} className="bg-popover text-popover-foreground">
+                      {example.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
         </div>
       </div>
 
@@ -231,11 +412,20 @@ export function EditorPanel({
           height="100%"
           language="typescript"
           theme="autopilot-dark"
-          value={code}
+          path={isToolboxActive ? toolboxModelUri : autopilotModelUri}
+          defaultValue={isToolboxActive ? toolboxLibrarySource : undefined}
+          value={isToolboxActive ? undefined : code}
           beforeMount={beforeMount}
           onMount={onMount}
-          onChange={(value) => onCodeChange(value ?? '')}
+          onChange={(value) => {
+            const activeModel = editorRef.current?.getModel();
+            if (activeModel && editorFileForUri(activeModel.uri) === 'autopilot') {
+              onCodeChange(value ?? '');
+            }
+          }}
+          keepCurrentModel
           options={{
+            readOnly: isToolboxActive,
             minimap: { enabled: false },
             fontSize: 13,
             lineHeight: 20,
@@ -252,11 +442,13 @@ export function EditorPanel({
         />
       </div>
 
-      <div className="border-t border-white/10 px-4 py-2 text-xs">
-        {compileErrors.length > 0 ? (
-          <span className="text-red-200">{compileErrors.length} compile issue{compileErrors.length === 1 ? '' : 's'}</span>
+      <div className="border-t border-border px-4 py-2 text-xs">
+        {isToolboxActive ? (
+          <span className="text-amber-200">autopilot-toolbox.ts</span>
+        ) : compileErrors.length > 0 ? (
+          <span className="text-red-400">{compileErrors.length} compile issue{compileErrors.length === 1 ? '' : 's'}</span>
         ) : (
-          <span className="text-mint">{codeStatus}</span>
+          <span className="text-emerald-400">{codeStatus}</span>
         )}
       </div>
     </section>

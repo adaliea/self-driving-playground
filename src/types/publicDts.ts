@@ -235,9 +235,23 @@ interface AutopilotDebug {
  * adjacent target lane during lane-change experiments.
  */
 declare function analyzeLaneRegression(
+  /** Lane-line samples around the ego lane. */
   laneLines: LaneLineDetections,
+  /**
+   * Target lane relative to ego.laneIndex.
+   * Use -1 for left adjacent lane, 0 for current lane, and 1 for right adjacent lane.
+   */
   relativeTargetLane?: number
 ): LaneAnalysis;
 
+/**
+ * Main controller entry point called once per simulation control tick.
+ *
+ * Keep persistent controller state, such as PID objects, outside this function
+ * so it survives between frames.
+ *
+ * @param input Current ego-relative sensor snapshot.
+ * @returns Normalized motor and steering command.
+ */
 declare function autopilot(input: AutopilotInput): AutopilotOutput;
 `;

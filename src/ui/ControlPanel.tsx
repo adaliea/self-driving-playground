@@ -1,6 +1,7 @@
 import { Pause, Play, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { useState } from 'react';
 import type { PlaygroundSettings } from '../types';
+import { Button } from './Button';
 import { Toggle } from './Toggle';
 
 interface ControlPanelProps {
@@ -8,57 +9,50 @@ interface ControlPanelProps {
   settings: PlaygroundSettings;
   onRunningChange: (running: boolean) => void;
   onReset: () => void;
+  onResetSettings: () => void;
   onSettingsChange: (settings: PlaygroundSettings) => void;
 }
 
-export function ControlPanel({ running, settings, onRunningChange, onReset, onSettingsChange }: ControlPanelProps) {
+export function ControlPanel({ running, settings, onRunningChange, onReset, onResetSettings, onSettingsChange }: ControlPanelProps) {
   const [open, setOpen] = useState(false);
   const update = <K extends keyof PlaygroundSettings>(key: K, value: PlaygroundSettings[K]) => {
     onSettingsChange({ ...settings, [key]: value });
   };
 
   return (
-    <section className="relative z-20 border-b border-white/10 bg-panel px-4 py-3">
+    <section className="relative z-20 border-b border-border bg-background px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onRunningChange(!running)}
-          className="inline-flex h-9 items-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-ink shadow-glow transition hover:bg-[#8bfade]"
-        >
-          {running ? <Pause size={16} /> : <Play size={16} />}
-          {running ? 'Pause' : 'Start'}
-        </button>
-        <button
-          type="button"
-          onClick={onReset}
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-white/12 bg-white/[0.045] px-3 text-sm font-medium text-slate-100 transition hover:border-mint/40"
-        >
-          <RotateCcw size={16} />
-          Reset
-        </button>
+          <Button type="button" onClick={() => onRunningChange(!running)}>
+            {running ? <Pause /> : <Play />}
+            {running ? 'Pause' : 'Start'}
+          </Button>
+          <Button type="button" variant="outline" onClick={onReset}>
+            <RotateCcw />
+            Reset
+          </Button>
         </div>
 
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={() => setOpen((current) => !current)}
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-white/12 bg-white/[0.045] px-3 text-sm font-medium text-slate-100 transition hover:border-mint/40"
           aria-expanded={open}
         >
-          <SlidersHorizontal size={16} />
+          <SlidersHorizontal />
           Settings
-        </button>
+        </Button>
       </div>
 
       {open ? (
-        <div className="absolute right-4 top-[calc(100%-0.25rem)] w-[min(28rem,calc(100vw-2rem))] rounded-md border border-white/12 bg-panel p-3 shadow-2xl shadow-black/50">
+        <div className="absolute right-4 top-[calc(100%-0.25rem)] w-[min(28rem,calc(100vw-2rem))] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg">
           <div className="grid gap-2">
-            <label className="flex h-9 items-center gap-2 rounded-md border border-white/10 bg-black/20 px-3 text-xs uppercase tracking-[0.18em] text-slate-400">
+            <label className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-xs uppercase tracking-[0.18em] text-muted-foreground">
               Seed
               <input
                 value={settings.seed}
                 onChange={(event) => update('seed', Number.parseInt(event.target.value, 10) || 0)}
-                className="w-20 bg-transparent text-sm font-semibold tracking-normal text-slate-100 outline-none"
+                className="w-20 bg-transparent text-sm font-semibold tracking-normal text-foreground outline-none"
                 type="number"
               />
             </label>
@@ -118,7 +112,18 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onSe
               onChange={(checked) => update('accelerateAssist', checked)}
             />
 
-            <div className="text-xs text-slate-500">Seed and starting speed apply on reset. Density changes live.</div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+              <div className="text-xs text-muted-foreground">Seed and starting speed apply on reset. Density changes live.</div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onResetSettings}
+              >
+                <RotateCcw />
+                Defaults
+              </Button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -138,10 +143,10 @@ interface RangeControlProps {
 
 function RangeControl({ label, value, min, max, step, display, onChange }: RangeControlProps) {
   return (
-    <label className="flex h-9 items-center gap-3 rounded-md border border-white/10 bg-black/20 px-3">
-      <span className="w-20 text-xs uppercase tracking-[0.18em] text-slate-400">{label}</span>
+    <label className="flex h-9 items-center gap-3 rounded-md border border-input bg-background px-3">
+      <span className="w-20 text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
       <input
-        className="h-1 min-w-20 flex-1 accent-mint"
+        className="h-1 min-w-20 flex-1 accent-primary"
         type="range"
         min={min}
         max={max}
@@ -149,7 +154,7 @@ function RangeControl({ label, value, min, max, step, display, onChange }: Range
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-      <span className="w-16 text-right text-xs font-semibold text-slate-100">{display}</span>
+      <span className="w-16 text-right text-xs font-semibold text-foreground">{display}</span>
     </label>
   );
 }

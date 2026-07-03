@@ -13,10 +13,10 @@ export function TelemetryPanel({ telemetry, compileErrors, runtimeError }: Telem
   const speedPid = telemetry?.debug?.speedPid;
 
   return (
-    <aside className="relative z-10 max-h-[42vh] min-w-0 overflow-auto border-t border-white/10 bg-panel p-4">
+    <aside className="relative z-10 max-h-[42vh] min-w-0 overflow-auto border-t border-border bg-background p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-mint">Telemetry</h2>
-        <Gauge className="text-mint" size={22} />
+        <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-foreground">Telemetry</h2>
+        <Gauge className="text-muted-foreground" size={22} />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 2xl:grid-cols-3">
@@ -55,16 +55,16 @@ export function TelemetryPanel({ telemetry, compileErrors, runtimeError }: Telem
 
 function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className={`rounded-md border px-3 py-2 ${accent ? 'border-amber/40 bg-amber/10' : 'border-white/8 bg-white/[0.035]'}`}>
-      <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{label}</div>
-      <div className="mt-1 font-mono text-sm font-semibold text-slate-100">{value}</div>
+    <div className={`rounded-md border px-3 py-2 ${accent ? 'border-sky-500/30 bg-sky-500/10' : 'border-border bg-card'}`}>
+      <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{label}</div>
+      <div className="mt-1 font-mono text-sm font-semibold text-card-foreground">{value}</div>
     </div>
   );
 }
 
 function AssistBadge({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-md border border-mint/25 bg-mint/10 px-3 py-2 text-xs text-mint">
+    <div className="flex items-center gap-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-200">
       <ShieldCheck size={14} />
       {label}
     </div>
@@ -73,7 +73,7 @@ function AssistBadge({ label }: { label: string }) {
 
 function WarningBadge({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-xs text-amber">
+    <div className="flex items-center gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-300">
       <AlertTriangle size={14} />
       {label}
     </div>
@@ -84,8 +84,8 @@ function PidBlock({ title, terms }: { title: string; terms?: { error: number; pr
   if (!terms) return null;
 
   return (
-    <div className="mt-4 rounded-md border border-white/8 bg-black/20 p-3">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+    <div className="mt-4 rounded-md border border-border bg-card p-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
         <GitPullRequestArrow size={14} />
         {title}
       </div>
@@ -154,27 +154,27 @@ function PidTerm({
       : 'left-1/2 -translate-x-1/2';
 
   return (
-    <div className="group relative rounded bg-white/[0.045] px-1.5 py-2 outline-none focus-within:bg-white/[0.075] hover:bg-white/[0.075]">
-      <div className="flex items-center justify-center gap-1 text-[10px] text-slate-500">
+    <div className="group relative rounded bg-muted px-1.5 py-2 outline-none focus-within:bg-accent hover:bg-accent">
+      <div className="flex items-center justify-center gap-1 text-[10px] text-muted-foreground">
         <span>{label}</span>
         <button
           type="button"
           aria-describedby={popoverId}
-          className="rounded-full text-slate-500 outline-none transition hover:text-mint focus-visible:text-mint focus-visible:ring-1 focus-visible:ring-mint/60"
+          className="rounded-full text-muted-foreground outline-none transition hover:text-sky-300 focus-visible:text-sky-300 focus-visible:ring-1 focus-visible:ring-ring"
         >
           <Info size={10} />
           <span className="sr-only">Explain {help.title}</span>
         </button>
       </div>
-      <div className="mt-1 text-slate-100">{formatSigned(value)}</div>
+      <div className="mt-1 text-foreground">{formatSigned(value)}</div>
       <div
         id={popoverId}
         role="tooltip"
-        className={`pointer-events-none absolute bottom-[calc(100%+0.55rem)] z-30 hidden w-64 rounded-md border border-mint/25 bg-[#081316] p-3 text-left font-sans shadow-2xl shadow-black/40 group-focus-within:block group-hover:block ${alignmentClass}`}
+        className={`pointer-events-none absolute bottom-[calc(100%+0.55rem)] z-30 hidden w-64 rounded-md border border-border bg-popover p-3 text-left font-sans text-popover-foreground shadow-lg group-focus-within:block group-hover:block ${alignmentClass}`}
       >
-        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-mint">{help.title}</div>
-        <p className="mt-2 text-xs leading-relaxed text-slate-100">{help.body}</p>
-        <p className="mt-2 border-t border-white/10 pt-2 text-[11px] leading-relaxed text-slate-400">{help.note}</p>
+        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-foreground">{help.title}</div>
+        <p className="mt-2 text-xs leading-relaxed">{help.body}</p>
+        <p className="mt-2 border-t border-border pt-2 text-[11px] leading-relaxed text-muted-foreground">{help.note}</p>
       </div>
     </div>
   );
@@ -182,12 +182,12 @@ function PidTerm({
 
 function ErrorBox({ title, lines }: { title: string; lines: string[] }) {
   return (
-    <div className="rounded-md border border-red-400/30 bg-red-950/30 p-3">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-red-200">
+    <div className="rounded-md border border-destructive/50 bg-destructive/20 p-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-destructive-foreground">
         <AlertTriangle size={14} />
         {title}
       </div>
-      <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-red-100">
+      <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-destructive-foreground">
         {lines.join('\n')}
       </pre>
     </div>

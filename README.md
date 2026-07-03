@@ -98,7 +98,7 @@ The default example is a working PID lane-keeping controller with comments expla
 
 ## Toolbox
 
-The toolbox panel provides insertable, inspectable TypeScript helpers:
+The toolbox panel provides inspectable TypeScript helpers from a virtual `autopilot-toolbox.ts` file:
 
 - `clamp`
 - vehicle lane filtering and closest-vehicle-ahead
@@ -107,4 +107,4 @@ The toolbox panel provides insertable, inspectable TypeScript helpers:
 - acceleration feedforward
 - adaptive cruise target-speed snippet
 
-Each helper can insert either a full implementation or a short usage example at the bottom of the editor.
+Each helper can insert a short usage example at the bottom of the editor. The implementations stay out of `Autopilot.ts`, but Monaco can still navigate to them with Go to Definition / Ctrl-click, opening the read-only toolbox file at the definition.
