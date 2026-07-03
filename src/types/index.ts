@@ -6,6 +6,7 @@ export type {
   EgoState,
   LaneLineDetections,
   LaneLineSample,
+  LaneAnalysis,
   PidDebugTerms,
   PlaygroundSettings,
   SanitizedAutopilotOutput,

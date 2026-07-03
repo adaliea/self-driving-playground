@@ -1,5 +1,5 @@
 import { Braces, ClipboardPlus, Wrench } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { ToolboxSnippet } from '../toolbox';
 
 interface ToolboxPanelProps {
@@ -75,7 +75,7 @@ export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
               </div>
 
               <pre className="mt-3 max-h-64 overflow-auto rounded-md border border-white/8 bg-ink p-3 font-mono text-xs leading-5 text-slate-300">
-                {selected.implementation}
+                <code>{highlightTypeScript(selected.implementation)}</code>
               </pre>
             </div>
           </div>
@@ -83,4 +83,74 @@ export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
       ) : null}
     </div>
   );
+}
+
+interface CodeToken {
+  value: string;
+  kind: 'comment' | 'keyword' | 'type' | 'string' | 'number' | 'operator' | 'plain';
+}
+
+const keywordSet = new Set([
+  'const',
+  'let',
+  'function',
+  'return',
+  'if',
+  'else',
+  'interface',
+  'type',
+  'extends',
+  'undefined',
+  'Number',
+  'Math',
+  'true',
+  'false',
+]);
+
+const tokenPattern =
+  /\/\/.*|(["'`])(?:\\.|(?!\1)[^\\])*\1|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|[{}()[\].,:;?+\-*/=<>&|!]+|\s+|./g;
+
+function highlightTypeScript(code: string): ReactNode[] {
+  return code.split('\n').flatMap((line, lineIndex, lines) => {
+    const nodes: ReactNode[] = tokenizeLine(line).map((token, tokenIndex) => (
+      <span key={`${lineIndex}-${tokenIndex}`} className={tokenClassName(token.kind)}>
+        {token.value}
+      </span>
+    ));
+
+    if (lineIndex < lines.length - 1) nodes.push('\n');
+    return nodes;
+  });
+}
+
+function tokenizeLine(line: string): CodeToken[] {
+  return [...line.matchAll(tokenPattern)].map((match) => {
+    const value = match[0];
+    if (value.startsWith('//')) return { value, kind: 'comment' };
+    if (/^["'`]/.test(value)) return { value, kind: 'string' };
+    if (/^\d/.test(value)) return { value, kind: 'number' };
+    if (/^[{}()[\].,:;?+\-*/=<>&|!]+$/.test(value)) return { value, kind: 'operator' };
+    if (keywordSet.has(value)) return { value, kind: 'keyword' };
+    if (/^[A-Z][A-Za-z0-9_]*$/.test(value)) return { value, kind: 'type' };
+    return { value, kind: 'plain' };
+  });
+}
+
+function tokenClassName(kind: CodeToken['kind']): string {
+  switch (kind) {
+    case 'comment':
+      return 'text-slate-500';
+    case 'keyword':
+      return 'text-[#89a9ff]';
+    case 'type':
+      return 'text-[#6df7d1]';
+    case 'string':
+      return 'text-[#82dec1]';
+    case 'number':
+      return 'text-[#f7c86d]';
+    case 'operator':
+      return 'text-slate-400';
+    default:
+      return 'text-slate-300';
+  }
 }

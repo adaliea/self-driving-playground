@@ -155,6 +155,33 @@ export interface LaneLineDetections {
 }
 
 /**
+ * Interpreted lane geometry returned by helper functions such as
+ * analyzeLaneRegression.
+ */
+export interface LaneAnalysis {
+  /**
+   * Estimated lateral offset from the target lane center, in meters.
+   * Positive means the lane center is to the right of ego.
+   */
+  centerOffset: number;
+
+  /**
+   * Estimated lane heading error ahead of the vehicle, in radians.
+   */
+  heading: number;
+
+  /**
+   * Estimated signed lane curvature ahead of the vehicle.
+   */
+  curvature: number;
+
+  /**
+   * Aggregate confidence from the lane-line samples used for the estimate.
+   */
+  confidence: number;
+}
+
+/**
  * Optional PID telemetry that examples and toolbox snippets can attach to output.debug.
  */
 export interface PidDebugTerms {

@@ -25,16 +25,47 @@ interface AutopilotOutput {
   debug?: AutopilotDebug;
 }
 
+/**
+ * Sensor snapshot passed into the autopilot function each control tick.
+ *
+ * Use this object as the only source of truth for user code. Values are already
+ * ego-relative where possible, so beginner controllers can work in meters and
+ * seconds without reading simulator internals.
+ */
 interface AutopilotInput {
-  /** Simulation timestep in seconds. */
+  /**
+   * Simulation timestep in seconds.
+   *
+   * Use this for PID integral and derivative calculations instead of assuming a
+   * frame rate.
+   */
   dt: number;
-  /** Ego vehicle state. */
+
+  /**
+   * Current ego vehicle state: speed, heading, and lane index.
+   */
   ego: EgoState;
-  /** Nearby detected vehicles in ego-relative coordinates. */
+
+  /**
+   * Nearby detected vehicles in ego-relative coordinates.
+   *
+   * Positive relativeY means ahead. Negative relativeX means left.
+   */
   vehicles: VehicleDetection[];
-  /** Detected lane-line samples in ego-relative coordinates. */
+
+  /**
+   * Detected lane-line samples in ego-relative coordinates.
+   *
+   * These samples may be noisy or missing when lane-line noise is enabled.
+   */
   laneLines: LaneLineDetections;
-  /** Current target lane for the controller. */
+
+  /**
+   * Current target lane for the controller.
+   *
+   * For the ego MVP this usually matches ego.laneIndex. Traffic controllers can
+   * use a different value while changing lanes.
+   */
   targetLane: number;
 }
 
@@ -48,15 +79,39 @@ interface EgoState {
 }
 
 interface VehicleDetection {
+  /**
+   * Stable id for this detected vehicle.
+   */
   id: string;
   /** Lateral position relative to ego, in meters. Negative means left, positive means right. */
   relativeX: number;
   /** Longitudinal position relative to ego, in meters. Positive means ahead, negative means behind. */
   relativeY: number;
+  /**
+   * Lateral relative velocity estimate in meters per second.
+   */
   relativeVx: number;
+
+  /**
+   * Longitudinal relative velocity estimate in meters per second.
+   *
+   * Negative means the detected vehicle is slower than ego.
+   */
   relativeVy: number;
+
+  /**
+   * Estimated vehicle width in meters.
+   */
   width: number;
+
+  /**
+   * Estimated vehicle length in meters.
+   */
   length: number;
+
+  /**
+   * Detection confidence from 0 to 1.
+   */
   confidence: number;
   /** Estimated lane index if known. */
   laneIndex?: number;
@@ -67,28 +122,122 @@ interface LaneLineSample {
   x: number;
   /** Longitudinal position relative to ego, in meters. */
   y: number;
+  /**
+   * Sample confidence from 0 to 1.
+   */
   confidence: number;
 }
 
+/**
+ * Lane-line detections around the current ego lane.
+ */
 interface LaneLineDetections {
+  /**
+   * Left boundary of the current lane.
+   */
   left: LaneLineSample[];
+
+  /**
+   * Right boundary of the current lane.
+   */
   right: LaneLineSample[];
+
+  /**
+   * Boundary one lane farther left when available.
+   */
   farLeft: LaneLineSample[];
+
+  /**
+   * Boundary one lane farther right when available.
+   */
   farRight: LaneLineSample[];
 }
 
+/**
+ * Interpreted lane geometry returned by analyzeLaneRegression.
+ */
+interface LaneAnalysis {
+  /**
+   * Estimated lateral offset from the target lane center, in meters.
+   * Positive means the lane center is to the right of ego.
+   */
+  centerOffset: number;
+
+  /**
+   * Estimated lane heading error ahead of the vehicle, in radians.
+   */
+  heading: number;
+
+  /**
+   * Estimated signed lane curvature ahead of the vehicle.
+   */
+  curvature: number;
+
+  /**
+   * Aggregate confidence from the lane-line samples used for the estimate.
+   */
+  confidence: number;
+}
+
+/**
+ * PID telemetry values for the UI.
+ *
+ * These values are display-only. They do not affect simulator physics.
+ */
 interface PidDebugTerms {
+  /**
+   * Current control error.
+   */
   error: number;
+
+  /**
+   * Proportional term: immediate response to current error.
+   */
   proportional: number;
+
+  /**
+   * Integral term: accumulated response to persistent error.
+   */
   integral: number;
+
+  /**
+   * Derivative term: damping response to the rate of error change.
+   */
   derivative: number;
+
+  /**
+   * Final PID output after combining terms and applying limits.
+   */
   output: number;
 }
 
+/**
+ * Optional debug payload returned as AutopilotOutput.debug.
+ */
 interface AutopilotDebug {
+  /**
+   * PID telemetry for lane keeping.
+   */
   lanePid?: PidDebugTerms;
+
+  /**
+   * PID telemetry for speed control.
+   */
   speedPid?: PidDebugTerms;
 }
+
+/**
+ * Built-in lane interpretation helper available to user code.
+ *
+ * It fits a weighted quadratic regression through forward lane-center samples
+ * and returns center offset, heading, curvature, and confidence. Pass
+ * input.targetLane - input.ego.laneIndex as relativeTargetLane to analyze an
+ * adjacent target lane during lane-change experiments.
+ */
+declare function analyzeLaneRegression(
+  laneLines: LaneLineDetections,
+  relativeTargetLane?: number
+): LaneAnalysis;
 
 declare function autopilot(input: AutopilotInput): AutopilotOutput;
 `;
