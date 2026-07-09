@@ -15,6 +15,17 @@ Build check:
 npm run build
 ```
 
+Cloudflare Workers preview and deployment:
+
+```bash
+npx wrangler login
+npm run preview:cloudflare
+npm run deploy:dry-run
+npm run deploy
+```
+
+The Workers config in `wrangler.jsonc` deploys the Vite `dist/` output as static assets and enables single-page-app fallback routing.
+
 Headless traffic/personality report:
 
 ```bash
