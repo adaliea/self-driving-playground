@@ -48,6 +48,190 @@
           const workerSource = `
             'use strict';
             const __sandboxSend = self.postMessage.bind(self);
+            const __inspectionVersion = ${version};
+            const __inspectionBindings = new Map();
+            const __inspectionCalls = new Map();
+            let __lastInspectionSnapshotAt = 0;
+            const __playgroundTraceValue = (id, value) => {
+              __inspectionBindings.set(id, { value, observedAt: Date.now() });
+              return value;
+            };
+            const __playgroundTracePostfix = (id, readCurrent, expressionResult) => {
+              let current;
+              try { current = readCurrent(); } catch (_) { current = expressionResult; }
+              __inspectionBindings.set(id, { value: current, observedAt: Date.now() });
+              return expressionResult;
+            };
+            const __playgroundTraceToolboxCall = (id, name, fn, args) => {
+              const result = Reflect.apply(fn, undefined, args);
+              const record = { name, args, result, observedAt: Date.now() };
+              if (name === 'createPidController' && result && typeof result.getDebug === 'function') {
+                try { record.pidDebug = result.getDebug.bind(result); } catch (_) {}
+              }
+              __inspectionCalls.set(id, record);
+              return result;
+            };
+            const __inspectionPreview = (value, state, path, depth) => {
+              try {
+                if (value === undefined) return { type: 'undefined' };
+                if (value === null) return { type: 'null' };
+                if (typeof value === 'boolean') return { type: 'boolean', value };
+                if (typeof value === 'number') {
+                  const display = Number.isNaN(value)
+                    ? 'NaN'
+                    : value === Infinity
+                    ? 'Infinity'
+                    : value === -Infinity
+                    ? '-Infinity'
+                    : Object.is(value, -0)
+                    ? '-0'
+                    : value;
+                  return { type: 'number', value: display };
+                }
+                if (typeof value === 'bigint') return { type: 'bigint', value: String(value) };
+                if (typeof value === 'string') {
+                  return value.length > 240
+                    ? { type: 'string', value: value.slice(0, 240), truncated: true }
+                    : { type: 'string', value };
+                }
+                if (typeof value === 'function') return { type: 'function', name: value.name || undefined };
+                if (typeof value === 'symbol') return { type: 'symbol', value: String(value) };
+                if (depth >= 4) return { type: 'unavailable', reason: 'Maximum preview depth reached' };
+                if (state.seen.has(value)) return { type: 'reference', path: state.seen.get(value) };
+                if (state.nodes >= 120) return { type: 'unavailable', reason: 'Preview size limit reached' };
+                state.seen.set(value, path);
+                state.nodes += 1;
+
+                if (Array.isArray(value)) {
+                  const limit = Math.min(value.length, 8);
+                  const items = [];
+                  for (let index = 0; index < limit; index += 1) {
+                    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+                    items.push(
+                      descriptor && 'value' in descriptor
+                        ? __inspectionPreview(descriptor.value, state, path + '[' + index + ']', depth + 1)
+                        : { type: 'unavailable', reason: 'Accessor or empty slot' }
+                    );
+                  }
+                  return { type: 'array', items, length: value.length, truncated: value.length > limit || undefined };
+                }
+
+                const descriptors = Object.getOwnPropertyDescriptors(value);
+                const keys = Object.keys(descriptors).slice(0, 12);
+                const properties = {};
+                for (const key of keys) {
+                  const descriptor = descriptors[key];
+                  properties[key] = descriptor && 'value' in descriptor
+                    ? __inspectionPreview(descriptor.value, state, path + '.' + key, depth + 1)
+                    : { type: 'unavailable', reason: 'Accessor not evaluated' };
+                }
+                let name;
+                const constructorDescriptor = descriptors.constructor;
+                if (constructorDescriptor && 'value' in constructorDescriptor && typeof constructorDescriptor.value === 'function') {
+                  name = constructorDescriptor.value.name || undefined;
+                }
+                return {
+                  type: 'object',
+                  name,
+                  properties,
+                  truncated: Object.keys(descriptors).length > keys.length || undefined
+                };
+              } catch (_) {
+                return { type: 'unavailable', reason: 'Value could not be inspected safely' };
+              }
+            };
+            const __previewRoot = (value, path) => __inspectionPreview(value, { seen: new WeakMap(), nodes: 0 }, path, 0);
+            const __toolboxDetails = (record) => {
+              try {
+                const args = record.args;
+                const result = record.result;
+                switch (record.name) {
+                  case 'createPidController': {
+                    let debug;
+                    try { debug = record.pidDebug ? record.pidDebug() : undefined; } catch (_) {}
+                    if (debug) record.observedAt = Date.now();
+                    const options = args[0] || {};
+                    const unclamped = debug
+                      ? Number(debug.proportional || 0) + Number(debug.integral || 0) + Number(debug.derivative || 0)
+                      : undefined;
+                    return { options, debug, unclamped };
+                  }
+                  case 'analyzeLane':
+                  case 'analyzeLaneRegression':
+                  case 'analyzeTargetLane':
+                    return {
+                      centerOffset: result && result.centerOffset,
+                      heading: result && result.heading,
+                      curvature: result && result.curvature,
+                      confidence: result && result.confidence,
+                      relativeTargetLane: record.name === 'analyzeLaneRegression'
+                        ? (args[1] === undefined ? 0 : args[1])
+                        : record.name === 'analyzeTargetLane' && args[0]
+                        ? Number(args[0].targetLane) - Number(args[0].ego && args[0].ego.laneIndex)
+                        : 0
+                    };
+                  case 'closestVehicleAhead':
+                    return { laneIndex: args[1], vehicle: result };
+                  case 'adaptiveCruiseTargetSpeed': {
+                    const input = args[0] || {};
+                    const freeRoadSpeed = args[1];
+                    const ego = input.ego || {};
+                    const vehicles = Array.isArray(input.vehicles) ? input.vehicles : [];
+                    let lead;
+                    for (const vehicle of vehicles) {
+                      if (!vehicle || vehicle.laneIndex !== ego.laneIndex || !(vehicle.relativeY > 0)) continue;
+                      if (!lead || vehicle.relativeY < lead.relativeY) lead = vehicle;
+                    }
+                    return {
+                      freeRoadSpeed,
+                      targetSpeed: result,
+                      targetGap: 10 + Number(ego.speed || 0) * 1.25,
+                      lead,
+                      mode: Number(result) < Number(freeRoadSpeed) ? 'following' : 'free road'
+                    };
+                  }
+                  case 'accelerationFeedforward':
+                    return { targetSpeed: args[0], currentSpeed: args[1], speedError: Number(args[0]) - Number(args[1]), output: result };
+                  case 'curvatureSteeringFeedforward':
+                    return { lane: args[0], speed: args[1], output: result };
+                  case 'clamp':
+                    return {
+                      input: args[0], min: args[1], max: args[2], output: result,
+                      saturation: Number(args[0]) < Number(args[1]) ? 'low' : Number(args[0]) > Number(args[2]) ? 'high' : 'none'
+                    };
+                  default:
+                    return undefined;
+                }
+              } catch (_) {
+                return undefined;
+              }
+            };
+            const __inspectionSnapshot = () => {
+              const now = Date.now();
+              if (now - __lastInspectionSnapshotAt < 100) return undefined;
+              __lastInspectionSnapshotAt = now;
+              const bindings = {};
+              for (const [id, record] of __inspectionBindings) {
+                bindings[id] = { observedAt: record.observedAt, value: __previewRoot(record.value, id) };
+              }
+              const toolboxCalls = {};
+              for (const [id, record] of __inspectionCalls) {
+                const rawDetails = __toolboxDetails(record);
+                const details = {};
+                if (rawDetails) {
+                  for (const [key, value] of Object.entries(rawDetails)) details[key] = __previewRoot(value, id + '.details.' + key);
+                }
+                toolboxCalls[id] = {
+                  id,
+                  name: record.name,
+                  observedAt: record.observedAt,
+                  args: [],
+                  result: { type: 'unavailable', reason: 'Use the formatted toolbox details' },
+                  details
+                };
+              }
+              return { version: __inspectionVersion, capturedAt: now, bindings, toolboxCalls };
+            };
             const __blocked = () => { throw new Error('Network, storage, and import APIs are disabled for autopilot code.'); };
             const __defineBlocked = (name, value) => {
               try { Object.defineProperty(self, name, { value, writable: false, configurable: false }); } catch (_) { try { self[name] = value; } catch (_) {} }
@@ -223,7 +407,8 @@
                   type: 'worker-result',
                   id: message.id,
                   output,
-                  durationMs: performance.now() - started
+                  durationMs: performance.now() - started,
+                  inspection: __inspectionSnapshot()
                 });
               } catch (error) {
                 __sandboxSend({
@@ -258,7 +443,13 @@
                 clearTimeout(record.timer);
                 pending.delete(message.id);
               }
-              send({ type: 'run-result', id: message.id, output: message.output, durationMs: Number(message.durationMs || 0) });
+              send({
+                type: 'run-result',
+                id: message.id,
+                output: message.output,
+                durationMs: Number(message.durationMs || 0),
+                inspection: message.inspection
+              });
               return;
             }
             if (message.type === 'worker-error') {

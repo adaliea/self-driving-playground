@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RenderTelemetry } from './rendering';
 import { CanvasRenderer } from './rendering';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation } from './simulation';
-import { SandboxClient, compileUserCode } from './sandbox';
+import { CompilerClient, RuntimeInspectionStore, SandboxClient } from './sandbox';
 import { controllerExamples, defaultControllerExample, toolboxSnippets } from './toolbox';
 import type { PlaygroundSettings } from './types';
 import {
@@ -14,12 +14,13 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  ControlPanel,
-  EditorPanel,
-  SimulatorCanvas,
-  TelemetryPanel,
-  ToolboxPanel,
-} from './ui';
+} from './ui/AlertDialog';
+import { ControlPanel } from './ui/ControlPanel';
+import { SimulatorCanvas } from './ui/SimulatorCanvas';
+import { TelemetryPanel } from './ui/TelemetryPanel';
+import { ToolboxPanel } from './ui/ToolboxPanel';
+
+const EditorPanel = lazy(() => import('./ui/EditorPanel').then((module) => ({ default: module.EditorPanel })));
 
 const USER_CODE_STORAGE_KEY = 'self-driving-playground:user-code:v1';
 const SETTINGS_STORAGE_KEY = 'self-driving-playground:settings:v1';
@@ -53,12 +54,17 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<CanvasRenderer>();
   const sandboxRef = useRef<SandboxClient>();
+  const compilerRef = useRef<CompilerClient>();
+  const inspectionStoreRef = useRef<RuntimeInspectionStore>();
   const settingsRef = useRef(settings);
   const runningRef = useRef(running);
   const codeRef = useRef(code);
   const codeLoadedRef = useRef(false);
   const compileSequenceRef = useRef(0);
   const runtimeErrorRef = useRef<string | undefined>(undefined);
+
+  if (!compilerRef.current) compilerRef.current = new CompilerClient();
+  if (!inspectionStoreRef.current) inspectionStoreRef.current = new RuntimeInspectionStore();
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -68,6 +74,7 @@ function App() {
 
   useEffect(() => {
     runningRef.current = running;
+    inspectionStoreRef.current!.setRunning(running);
   }, [running]);
 
   useEffect(() => {
@@ -113,10 +120,20 @@ function App() {
     let cancelled = false;
     const sequence = ++compileSequenceRef.current;
     codeLoadedRef.current = false;
+    inspectionStoreRef.current!.clearProgram();
     setCodeStatus('Compiling TypeScript');
 
     const timer = window.setTimeout(async () => {
-      const result = compileUserCode(code);
+      let result;
+      try {
+        result = await compilerRef.current!.compile(code);
+      } catch (error) {
+        if (cancelled || sequence !== compileSequenceRef.current) return;
+        setCompileErrors([formatError(error)]);
+        setCodeStatus('Compile failed');
+        return;
+      }
+
       if (cancelled || sequence !== compileSequenceRef.current) return;
 
       if (!result.ok) {
@@ -127,8 +144,9 @@ function App() {
 
       setCompileErrors([]);
       try {
-        await sandboxRef.current?.loadCode(result.js);
+        const version = await sandboxRef.current?.loadCode(result.js);
         if (cancelled || sequence !== compileSequenceRef.current) return;
+        if (version !== undefined) inspectionStoreRef.current!.setProgram(version, result.inspection);
         codeLoadedRef.current = true;
         setCodeStatus('Code loaded');
         setRuntimeError(undefined);
@@ -146,6 +164,10 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [code]);
+
+  useEffect(() => {
+    return () => compilerRef.current?.dispose();
+  }, []);
 
   useLayoutEffect(() => {
     if (!canvasRef.current) return undefined;
@@ -195,7 +217,9 @@ function App() {
 
           if (codeLoadedRef.current && sandboxRef.current) {
             try {
-              output = await sandboxRef.current.run(input, 28);
+              const runResult = await sandboxRef.current.run(input, 28);
+              output = runResult.output;
+              if (runResult.inspection) inspectionStoreRef.current!.updateSnapshot(runResult.inspection);
               if (runtimeErrorRef.current) {
                 runtimeErrorRef.current = undefined;
                 setRuntimeError(undefined);
@@ -307,16 +331,30 @@ function App() {
     <div className="min-h-screen bg-background text-foreground">
       <main className="grid min-h-screen min-w-0 grid-cols-1 lg:grid-cols-2">
         <div className="grid min-h-[620px] min-w-0 border-r border-border lg:h-screen">
-          <EditorPanel
-            code={code}
-            examples={controllerExamples}
-            selectedExampleId={selectedExampleId}
-            compileErrors={compileErrors}
-            codeStatus={codeStatus}
-            toolbox={<ToolboxPanel snippets={toolboxSnippets} onInsert={insertSnippet} />}
-            onCodeChange={updateCode}
-            onLoadExample={loadExample}
-          />
+          <Suspense
+            fallback={
+              <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden bg-background">
+                <div className="border-b border-border px-4 py-3">
+                  <div className="h-8 w-48 rounded bg-muted" />
+                </div>
+                <div className="flex min-h-[420px] flex-1 items-center justify-center text-sm text-muted-foreground">
+                  Loading editor
+                </div>
+              </section>
+            }
+          >
+            <EditorPanel
+              code={code}
+              examples={controllerExamples}
+              selectedExampleId={selectedExampleId}
+              compileErrors={compileErrors}
+              codeStatus={codeStatus}
+              inspectionStore={inspectionStoreRef.current}
+              toolbox={<ToolboxPanel snippets={toolboxSnippets} onInsert={insertSnippet} />}
+              onCodeChange={updateCode}
+              onLoadExample={loadExample}
+            />
+          </Suspense>
         </div>
 
         <div className="flex min-h-[620px] min-w-0 flex-col lg:h-screen">

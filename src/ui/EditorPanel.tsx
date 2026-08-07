@@ -1,12 +1,18 @@
 import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react';
 import { Code2, FileCode2, Wrench } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { editor } from 'monaco-editor';
-import * as monacoEditor from 'monaco-editor';
+import type { editor } from 'monaco-editor/esm/vs/editor/editor.api';
+import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
+import 'monaco-editor/esm/vs/editor/editor.all.js';
+import 'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution.js';
+import 'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js';
+import 'monaco-editor/esm/vs/language/typescript/monaco.contribution.js';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import TypeScriptWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
+import type { RuntimeInspectionStore } from '../sandbox';
 import { toolboxLibrarySource, type ControllerExample } from '../toolbox';
 import { publicAutopilotDts } from '../types/publicDts';
+import { RuntimeValueWidget } from './RuntimeValueWidget';
 
 type MonacoWorkerGlobal = typeof self & {
   MonacoEnvironment?: {
@@ -243,6 +249,7 @@ interface EditorPanelProps {
   selectedExampleId: string;
   compileErrors: string[];
   codeStatus: string;
+  inspectionStore: RuntimeInspectionStore;
   toolbox: ReactNode;
   onCodeChange: (code: string) => void;
   onLoadExample: (id: string) => void;
@@ -254,12 +261,14 @@ export function EditorPanel({
   selectedExampleId,
   compileErrors,
   codeStatus,
+  inspectionStore,
   toolbox,
   onCodeChange,
   onLoadExample,
 }: EditorPanelProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const editorOpenerRef = useRef<monacoEditor.IDisposable | null>(null);
+  const runtimeHoverDisposablesRef = useRef<monacoEditor.IDisposable[]>([]);
   const pendingRevealRef = useRef<EditorLocation>();
   const [activeFile, setActiveFile] = useState<ActiveEditorFile>('autopilot');
   const isToolboxActive = activeFile === 'toolbox';
@@ -300,6 +309,8 @@ export function EditorPanel({
   const onMount: OnMount = (editorInstance) => {
     editorRef.current = editorInstance;
     editorOpenerRef.current?.dispose();
+    for (const disposable of runtimeHoverDisposablesRef.current) disposable.dispose();
+    runtimeHoverDisposablesRef.current = [];
     editorOpenerRef.current = monacoEditor.editor.registerEditorOpener({
       openCodeEditor(_source, resource, selectionOrPosition) {
         const nextFile = editorFileForUri(resource);
@@ -318,6 +329,10 @@ export function EditorPanel({
         return true;
       },
     });
+
+    runtimeHoverDisposablesRef.current = [
+      new RuntimeValueWidget(monacoEditor, editorInstance, inspectionStore, autopilotModelUri),
+    ];
   };
 
   useEffect(() => {
@@ -339,6 +354,8 @@ export function EditorPanel({
     return () => {
       editorOpenerRef.current?.dispose();
       editorOpenerRef.current = null;
+      for (const disposable of runtimeHoverDisposablesRef.current) disposable.dispose();
+      runtimeHoverDisposablesRef.current = [];
     };
   }, []);
 
