@@ -100,6 +100,12 @@ interface VehicleDetection {
   relativeVy: number;
 
   /**
+   * Detected vehicle yaw relative to ego heading, in radians.
+   * Positive angles turn toward ego's right.
+   */
+  relativeHeading: number;
+
+  /**
    * Estimated vehicle width in meters.
    */
   width: number;
