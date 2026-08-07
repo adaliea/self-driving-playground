@@ -245,14 +245,25 @@ export class CanvasRenderer {
     const length = detection.length * scale;
 
     ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(detection.relativeHeading);
     ctx.globalAlpha = 0.25 + detection.confidence * 0.55;
     ctx.strokeStyle = '#f7c86d';
     ctx.lineWidth = 1.4;
     ctx.setLineDash([5, 5]);
-    ctx.strokeRect(center.x - width / 2, center.y - length / 2, width, length);
+    ctx.strokeRect(-width / 2, -length / 2, width, length);
     ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(247, 200, 109, 0.12)';
-    ctx.fillRect(center.x - width / 2, center.y - length / 2, width, length);
+    ctx.fillRect(-width / 2, -length / 2, width, length);
+
+    // A solid nose marker makes the detected yaw readable even on nearly square boxes.
+    ctx.fillStyle = '#f7c86d';
+    ctx.beginPath();
+    ctx.moveTo(0, -length / 2 - 5);
+    ctx.lineTo(-Math.min(5, width * 0.22), -length / 2 + 2);
+    ctx.lineTo(Math.min(5, width * 0.22), -length / 2 + 2);
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
   }
 

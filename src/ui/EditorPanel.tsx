@@ -1,5 +1,5 @@
 import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react';
-import { Code2, FileCode2, Wrench } from 'lucide-react';
+import { Braces, Code2, FileCode2, LockKeyhole, Wrench } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { editor } from 'monaco-editor/esm/vs/editor/editor.api';
 import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
@@ -35,7 +35,7 @@ const autopilotModelUri = 'file:///autopilot.ts';
 const autopilotApiDtsUri = 'file:///autopilot-api.d.ts';
 const toolboxModelUri = 'file:///autopilot-toolbox.ts';
 
-type ActiveEditorFile = 'autopilot' | 'toolbox';
+type ActiveEditorFile = 'autopilot' | 'api' | 'toolbox';
 type EditorLocation =
   | {
       lineNumber: number;
@@ -89,6 +89,8 @@ const autopilotHoverDocs: Record<string, string> = {
     'A nearby vehicle observed by the sensor model.',
     '',
     '`relativeX` is lateral meters from ego: negative is left, positive is right. `relativeY` is longitudinal meters: positive is ahead, negative is behind.',
+    '',
+    '`relativeHeading` is the detected vehicle yaw relative to ego in radians. Positive turns toward ego\'s right.',
     '',
     'Use `laneIndex` and `relativeY` to find lead vehicles for adaptive cruise control.',
   ].join('\n'),
@@ -201,6 +203,17 @@ function registerAutopilotHoverProvider(monaco: MonacoApi): void {
   });
 }
 
+function ensurePublicApiModel(monaco: MonacoApi): void {
+  const uri = monaco.Uri.parse(autopilotApiDtsUri);
+  const existing = monaco.editor.getModel(uri);
+  if (existing) {
+    if (existing.getValue() !== publicAutopilotDts) existing.setValue(publicAutopilotDts);
+    return;
+  }
+
+  monaco.editor.createModel(publicAutopilotDts, 'typescript', uri);
+}
+
 function registerPublicAutopilotDts(monaco: MonacoApi): void {
   if (publicAutopilotDtsRegistered) return;
   publicAutopilotDtsRegistered = true;
@@ -219,6 +232,7 @@ function ensureToolboxModel(monaco: MonacoApi): void {
 }
 
 function editorFileForUri(resource: monacoEditor.Uri): ActiveEditorFile | undefined {
+  if (resource.toString() === autopilotApiDtsUri || resource.path === '/autopilot-api.d.ts') return 'api';
   if (resource.toString() === toolboxModelUri || resource.path === '/autopilot-toolbox.ts') return 'toolbox';
   if (resource.toString() === autopilotModelUri || resource.path === '/autopilot.ts') return 'autopilot';
   return undefined;
@@ -272,6 +286,8 @@ export function EditorPanel({
   const pendingRevealRef = useRef<EditorLocation>();
   const [activeFile, setActiveFile] = useState<ActiveEditorFile>('autopilot');
   const isToolboxActive = activeFile === 'toolbox';
+  const isApiActive = activeFile === 'api';
+  const isReadOnly = activeFile !== 'autopilot';
   const hasSelectedExample = examples.some((example) => example.id === selectedExampleId);
 
   const beforeMount: BeforeMount = (monaco) => {
@@ -284,6 +300,7 @@ export function EditorPanel({
       isolatedModules: true,
     });
     registerPublicAutopilotDts(monaco);
+    ensurePublicApiModel(monaco);
     ensureToolboxModel(monaco);
     registerAutopilotHoverProvider(monaco);
     monaco.editor.defineTheme('autopilot-dark', {
@@ -379,6 +396,20 @@ export function EditorPanel({
           </button>
           <button
             type="button"
+            onClick={() => setActiveFile('api')}
+            className={`inline-flex h-8 items-center gap-2 rounded px-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
+              activeFile === 'api'
+                ? 'bg-emerald-500/10 text-emerald-100 shadow-sm ring-1 ring-emerald-500/20'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+            }`}
+            role="tab"
+            aria-selected={activeFile === 'api'}
+          >
+            <Braces size={14} />
+            API.d.ts
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveFile('toolbox')}
             className={`inline-flex h-8 items-center gap-2 rounded px-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
               activeFile === 'toolbox'
@@ -393,8 +424,9 @@ export function EditorPanel({
           </button>
         </div>
         <div className="flex items-center gap-2">
-          {isToolboxActive ? (
-            <span className="inline-flex h-8 items-center rounded-md border border-amber-500/20 bg-amber-500/10 px-3 text-xs font-semibold text-amber-100">
+          {isReadOnly ? (
+            <span className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 text-xs font-semibold text-muted-foreground">
+              <LockKeyhole size={13} aria-hidden="true" />
               Read-only
             </span>
           ) : (
@@ -429,9 +461,9 @@ export function EditorPanel({
           height="100%"
           language="typescript"
           theme="autopilot-dark"
-          path={isToolboxActive ? toolboxModelUri : autopilotModelUri}
-          defaultValue={isToolboxActive ? toolboxLibrarySource : undefined}
-          value={isToolboxActive ? undefined : code}
+          path={isToolboxActive ? toolboxModelUri : isApiActive ? autopilotApiDtsUri : autopilotModelUri}
+          defaultValue={isToolboxActive ? toolboxLibrarySource : isApiActive ? publicAutopilotDts : undefined}
+          value={isReadOnly ? undefined : code}
           beforeMount={beforeMount}
           onMount={onMount}
           onChange={(value) => {
@@ -442,7 +474,7 @@ export function EditorPanel({
           }}
           keepCurrentModel
           options={{
-            readOnly: isToolboxActive,
+            readOnly: isReadOnly,
             minimap: { enabled: false },
             fontSize: 13,
             lineHeight: 20,
@@ -462,6 +494,8 @@ export function EditorPanel({
       <div className="border-t border-border px-4 py-2 text-xs">
         {isToolboxActive ? (
           <span className="text-amber-200">autopilot-toolbox.ts</span>
+        ) : isApiActive ? (
+          <span className="text-emerald-200">autopilot-api.d.ts · public controller interfaces</span>
         ) : compileErrors.length > 0 ? (
           <span className="text-red-400">{compileErrors.length} compile issue{compileErrors.length === 1 ? '' : 's'}</span>
         ) : (

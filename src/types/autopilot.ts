@@ -116,6 +116,12 @@ export interface VehicleDetection {
   relativeVx: number;
   relativeVy: number;
 
+  /**
+   * Detected vehicle yaw relative to ego heading, in radians.
+   * Positive angles rotate clockwise/right in the ego-relative top-down view.
+   */
+  relativeHeading: number;
+
   width: number;
   length: number;
   confidence: number;

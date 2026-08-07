@@ -83,7 +83,8 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
                 onChange={(checked) => update('noisyLaneLines', checked)}
               />
               <Toggle
-                label="Noisy boxes"
+                label="Noisy vehicle poses"
+                detail="Position, size, yaw, misses & tracking lag"
                 checked={settings.noisyVehicles}
                 onChange={(checked) => update('noisyVehicles', checked)}
               />

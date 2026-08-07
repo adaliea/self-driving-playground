@@ -25,6 +25,14 @@ export class SeededRandom {
     return this.next() < probability;
   }
 
+  /** Samples a normal distribution with the Box-Muller transform. */
+  gaussian(mean = 0, standardDeviation = 1): number {
+    const u = Math.max(Number.EPSILON, this.next());
+    const v = this.next();
+    const standardNormal = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    return mean + standardNormal * standardDeviation;
+  }
+
   fork(salt: number): SeededRandom {
     return new SeededRandom(((this.state ^ Math.imul(salt, 0x9e3779b1)) >>> 0) || 1);
   }
