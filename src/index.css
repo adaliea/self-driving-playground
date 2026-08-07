@@ -77,3 +77,108 @@ select:focus-visible {
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground));
 }
+
+.runtime-live-value-widget {
+  width: min(380px, calc(100% - 24px));
+  max-height: min(320px, calc(100vh - 160px));
+  overflow: hidden;
+  border: 1px solid rgb(59 130 246 / 0.28);
+  border-radius: 10px;
+  background: rgb(9 9 11 / 0.97);
+  color: hsl(var(--foreground));
+  box-shadow: 0 18px 45px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(255 255 255 / 0.025) inset;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+}
+
+.runtime-live-value-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgb(63 63 70 / 0.8);
+  color: rgb(191 219 254);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.runtime-live-value-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgb(52 211 153);
+  box-shadow: 0 0 10px rgb(52 211 153 / 0.7);
+}
+
+.runtime-live-value-widget[data-running="false"] .runtime-live-value-indicator {
+  background: rgb(251 191 36);
+  box-shadow: 0 0 10px rgb(251 191 36 / 0.55);
+}
+
+.runtime-live-value-content {
+  max-height: min(288px, calc(100vh - 192px));
+  padding: 10px 12px 12px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.runtime-live-value-heading {
+  margin-bottom: 7px;
+  color: rgb(244 244 245);
+  font-size: 12px;
+}
+
+.runtime-live-value-line {
+  color: rgb(161 161 170);
+}
+
+.runtime-live-value-code {
+  margin: 7px 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid rgb(63 63 70 / 0.8);
+  border-radius: 6px;
+  background: rgb(24 24 27 / 0.85);
+  color: rgb(219 234 254);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.runtime-live-value-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: rgb(212 212 216);
+  font-size: 11px;
+}
+
+.runtime-live-value-table tr + tr {
+  border-top: 1px solid rgb(39 39 42 / 0.9);
+}
+
+.runtime-live-value-table th,
+.runtime-live-value-table td {
+  padding: 4px 0;
+  vertical-align: top;
+}
+
+.runtime-live-value-table th {
+  width: 44%;
+  padding-right: 12px;
+  color: rgb(161 161 170);
+  font-weight: 500;
+  text-align: left;
+}
+
+.runtime-live-value-table td {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-align: right;
+}

@@ -1,4 +1,5 @@
 import type { AutopilotInput } from '../types';
+import type { RuntimeInspectionSnapshot } from './inspection';
 
 export interface SandboxReadyMessage {
   type: 'sandbox-ready';
@@ -20,6 +21,7 @@ export interface SandboxRunResultMessage {
   id: number;
   output: unknown;
   durationMs: number;
+  inspection?: RuntimeInspectionSnapshot;
 }
 
 export interface SandboxRunErrorMessage {
@@ -60,12 +62,26 @@ export function isSandboxFromFrameMessage(value: unknown): value is SandboxFromF
     case 'code-load-error':
       return typeof value.version === 'number' && typeof value.message === 'string';
     case 'run-result':
-      return typeof value.id === 'number' && typeof value.durationMs === 'number';
+      return (
+        typeof value.id === 'number' &&
+        typeof value.durationMs === 'number' &&
+        (value.inspection === undefined || isRuntimeInspectionSnapshot(value.inspection))
+      );
     case 'run-error':
       return typeof value.id === 'number' && typeof value.message === 'string';
     default:
       return false;
   }
+}
+
+function isRuntimeInspectionSnapshot(value: unknown): value is RuntimeInspectionSnapshot {
+  return (
+    isRecord(value) &&
+    typeof value.version === 'number' &&
+    typeof value.capturedAt === 'number' &&
+    isRecord(value.bindings) &&
+    isRecord(value.toolboxCalls)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

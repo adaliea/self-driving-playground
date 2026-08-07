@@ -1,8 +1,15 @@
 import type { AutopilotInput } from '../types';
+import type { RuntimeInspectionSnapshot } from './inspection';
 import { isSandboxFromFrameMessage, type SandboxFromFrameMessage, type SandboxToFrameMessage } from './protocol';
 
+export interface SandboxRunResult {
+  output: unknown;
+  durationMs: number;
+  inspection?: RuntimeInspectionSnapshot;
+}
+
 interface PendingRun {
-  resolve: (value: unknown) => void;
+  resolve: (value: SandboxRunResult) => void;
   reject: (error: Error) => void;
   timer: number;
 }
@@ -59,11 +66,11 @@ export class SandboxClient {
     return this.readyPromise;
   }
 
-  async loadCode(js: string): Promise<void> {
+  async loadCode(js: string): Promise<number> {
     await this.start();
     const version = this.version++;
 
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pendingLoads.delete(version);
         reject(new Error('Code runner did not load code in time.'));
@@ -72,13 +79,14 @@ export class SandboxClient {
       this.pendingLoads.set(version, { resolve, reject, timer });
       this.send({ type: 'load-code', version, js });
     });
+    return version;
   }
 
-  async run(input: AutopilotInput, timeoutMs = 24): Promise<unknown> {
+  async run(input: AutopilotInput, timeoutMs = 24): Promise<SandboxRunResult> {
     await this.start();
     const id = this.requestId++;
 
-    return new Promise<unknown>((resolve, reject) => {
+    return new Promise<SandboxRunResult>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pendingRuns.delete(id);
         reject(new Error('Autopilot code timed out.'));
@@ -147,7 +155,11 @@ export class SandboxClient {
         if (!pending) return;
         window.clearTimeout(pending.timer);
         this.pendingRuns.delete(message.id);
-        pending.resolve(message.output);
+        pending.resolve({
+          output: message.output,
+          durationMs: message.durationMs,
+          inspection: message.inspection,
+        });
         break;
       }
       case 'run-error': {
