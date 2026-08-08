@@ -1,4 +1,4 @@
-import type { LaneLineSample, VehicleDetection } from '../types';
+import type { LaneLineSample, VehicleMeasurement, VehicleTrack } from '../types';
 import type { RenderPoint, RenderSnapshot, RenderVehicle } from './types';
 
 interface ScreenPoint {
@@ -39,6 +39,7 @@ export class CanvasRenderer {
     this.drawLaneSamples(snapshot, scale);
     this.drawVehicles(snapshot);
     this.drawDetections(snapshot, scale);
+    this.drawPerceptionLegend(snapshot);
     this.drawControlOverlay(snapshot);
   }
 
@@ -222,9 +223,8 @@ export class CanvasRenderer {
   private drawDetections(snapshot: RenderSnapshot, scale: number): void {
     if (!snapshot.settings.debugOverlays) return;
     const ctx = this.ctx;
-    for (const detection of snapshot.sensors.detections) {
-      this.drawDetection(detection, scale);
-    }
+    for (const measurement of snapshot.sensors.measurements) this.drawMeasurement(measurement, scale);
+    for (const track of snapshot.sensors.tracks) this.drawTrack(track, scale);
 
     ctx.save();
     ctx.strokeStyle = 'rgba(109, 247, 209, 0.11)';
@@ -238,32 +238,119 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
-  private drawDetection(detection: VehicleDetection, scale: number): void {
+  private drawMeasurement(measurement: VehicleMeasurement, scale: number): void {
     const ctx = this.ctx;
-    const center = this.relativeToScreen(detection.relativeX, detection.relativeY);
-    const width = detection.width * scale;
-    const length = detection.length * scale;
+    const center = this.relativeToScreen(measurement.relativeX, measurement.relativeY);
+    const width = measurement.width * scale;
+    const length = measurement.length * scale;
 
     ctx.save();
     ctx.translate(center.x, center.y);
-    ctx.rotate(detection.relativeHeading);
-    ctx.globalAlpha = 0.25 + detection.confidence * 0.55;
+    ctx.rotate(measurement.relativeHeading);
+    ctx.globalAlpha = 0.2 + measurement.confidence * 0.45;
     ctx.strokeStyle = '#f7c86d';
-    ctx.lineWidth = 1.4;
+    ctx.lineWidth = 1.2;
     ctx.setLineDash([5, 5]);
     ctx.strokeRect(-width / 2, -length / 2, width, length);
     ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(247, 200, 109, 0.12)';
+    ctx.fillStyle = 'rgba(247, 200, 109, 0.07)';
     ctx.fillRect(-width / 2, -length / 2, width, length);
 
-    // A solid nose marker makes the detected yaw readable even on nearly square boxes.
     ctx.fillStyle = '#f7c86d';
+    ctx.beginPath();
+    ctx.arc(0, -length / 2 - 3, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  private drawTrack(track: VehicleTrack, scale: number): void {
+    const ctx = this.ctx;
+    const center = this.relativeToScreen(track.relativeX, track.relativeY);
+    const width = track.width * scale;
+    const length = track.length * scale;
+    const predictedFade = track.isPredicted
+      ? Math.max(0.28, 1 - track.timeSinceMeasurement / 0.52)
+      : 1;
+
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.globalAlpha = predictedFade * (0.35 + track.confidence * 0.55);
+    ctx.strokeStyle = '#6df7d1';
+    ctx.lineWidth = 1;
+    ctx.setLineDash(track.isPredicted ? [2, 4] : []);
+    ctx.beginPath();
+    ctx.ellipse(
+      0,
+      0,
+      Math.max(2, track.uncertainty.lateralPosition * scale * 2),
+      Math.max(3, track.uncertainty.longitudinalPosition * scale * 2),
+      0,
+      0,
+      Math.PI * 2,
+    );
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(track.relativeHeading);
+    ctx.globalAlpha = predictedFade * (0.35 + track.confidence * 0.6);
+    ctx.strokeStyle = '#6df7d1';
+    ctx.lineWidth = 1.7;
+    ctx.setLineDash(track.isPredicted ? [3, 3] : []);
+    ctx.strokeRect(-width / 2, -length / 2, width, length);
+    ctx.setLineDash([]);
+    ctx.fillStyle = track.isPredicted ? 'rgba(109, 247, 209, 0.04)' : 'rgba(109, 247, 209, 0.09)';
+    ctx.fillRect(-width / 2, -length / 2, width, length);
+
+    // A nose marker keeps the filtered yaw readable independently of the raw box.
+    ctx.fillStyle = '#6df7d1';
     ctx.beginPath();
     ctx.moveTo(0, -length / 2 - 5);
     ctx.lineTo(-Math.min(5, width * 0.22), -length / 2 + 2);
     ctx.lineTo(Math.min(5, width * 0.22), -length / 2 + 2);
     ctx.closePath();
     ctx.fill();
+    ctx.restore();
+  }
+
+  private drawPerceptionLegend(snapshot: RenderSnapshot): void {
+    if (!snapshot.settings.debugOverlays) return;
+    const ctx = this.ctx;
+    const width = 156;
+    const height = 58;
+    const x = this.width - width - 14;
+    const y = this.height - height - 14;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(5, 15, 18, 0.82)';
+    ctx.strokeStyle = 'rgba(109, 247, 209, 0.18)';
+    ctx.lineWidth = 1;
+    roundedRect(ctx, x, y, width, height, 7);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textBaseline = 'middle';
+
+    ctx.strokeStyle = '#f7c86d';
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x + 10, y + 11, 15, 8);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(247, 200, 109, 0.9)';
+    ctx.fillText('RAW MEASUREMENT', x + 34, y + 15);
+
+    ctx.strokeStyle = '#6df7d1';
+    ctx.strokeRect(x + 10, y + 29, 15, 8);
+    ctx.fillStyle = 'rgba(109, 247, 209, 0.94)';
+    ctx.fillText('TRACK', x + 34, y + 33);
+
+    ctx.strokeStyle = 'rgba(109, 247, 209, 0.72)';
+    ctx.setLineDash([2, 3]);
+    ctx.strokeRect(x + 10, y + 45, 15, 7);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(109, 247, 209, 0.72)';
+    ctx.fillText('PREDICTED', x + 34, y + 49);
     ctx.restore();
   }
 

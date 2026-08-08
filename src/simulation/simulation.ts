@@ -258,7 +258,8 @@ export class Simulation {
         };
       }),
       sensors: {
-        detections: this.lastEgoInput.vehicles,
+        measurements: this.lastEgoInput.vehicleMeasurements,
+        tracks: this.lastEgoInput.vehicles,
         laneLines: this.lastEgoInput.laneLines,
       },
       telemetry: {

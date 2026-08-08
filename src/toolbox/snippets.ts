@@ -6,6 +6,7 @@ import {
   laneInterpretationImplementation,
   pidControllerImplementation,
   vehicleFilteringImplementation,
+  vehicleTrackerImplementation,
 } from './library';
 
 export interface ToolboxSnippet {
@@ -26,6 +27,21 @@ export const toolboxSnippets: ToolboxSnippet[] = [
     implementation: clampImplementation,
     usage: `const safeSteering = clamp(steering, -1, 1);
 const safeMotor = clamp(motor, -1, 1);`,
+  },
+  {
+    id: 'vehicle-tracker',
+    title: 'Kalman Vehicle Tracker',
+    category: 'Estimation',
+    description: 'Builds stable constant-velocity tracks from intermittent raw vehicle measurements.',
+    implementation: vehicleTrackerImplementation,
+    usage: `const tracker = createVehicleTracker();
+
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  const myTracks = tracker.update(input.vehicleMeasurements, input.dt);
+  const lead = closestVehicleAhead(myTracks, input.ego.laneIndex);
+  // Compare myTracks with the built-in input.vehicles tracks.
+  return { motor: lead && lead.relativeY < 25 ? -0.2 : 0.3, steering: 0 };
+}`,
   },
   {
     id: 'vehicle-filtering',

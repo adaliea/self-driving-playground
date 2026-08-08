@@ -1,4 +1,4 @@
-import type { AutopilotDebug, LaneLineDetections, PlaygroundSettings, VehicleDetection } from '../types';
+import type { AutopilotDebug, LaneLineDetections, PlaygroundSettings, VehicleMeasurement, VehicleTrack } from '../types';
 
 export interface RenderPoint {
   x: number;
@@ -64,7 +64,8 @@ export interface RenderTelemetry {
 }
 
 export interface RenderSensors {
-  detections: VehicleDetection[];
+  measurements: VehicleMeasurement[];
+  tracks: VehicleTrack[];
   laneLines: LaneLineDetections;
 }
 

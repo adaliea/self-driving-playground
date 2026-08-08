@@ -1,7 +1,8 @@
-import { Pause, Play, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { CircleHelp, Pause, Play, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { useState } from 'react';
 import type { PlaygroundSettings } from '../types';
 import { Button } from './Button';
+import { NoiseInfoDialog } from './NoiseInfoDialog';
 import { Toggle } from './Toggle';
 
 interface ControlPanelProps {
@@ -15,6 +16,7 @@ interface ControlPanelProps {
 
 export function ControlPanel({ running, settings, onRunningChange, onReset, onResetSettings, onSettingsChange }: ControlPanelProps) {
   const [open, setOpen] = useState(false);
+  const [noiseInfoOpen, setNoiseInfoOpen] = useState(false);
   const update = <K extends keyof PlaygroundSettings>(key: K, value: PlaygroundSettings[K]) => {
     onSettingsChange({ ...settings, [key]: value });
   };
@@ -82,12 +84,23 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
                 checked={settings.noisyLaneLines}
                 onChange={(checked) => update('noisyLaneLines', checked)}
               />
-              <Toggle
-                label="Noisy vehicle poses"
-                detail="Position, size, yaw, misses & tracking lag"
-                checked={settings.noisyVehicles}
-                onChange={(checked) => update('noisyVehicles', checked)}
-              />
+              <div className="relative">
+                <Toggle
+                  label="Noisy vehicle poses"
+                  detail="Raw pose noise, dropout & tracked estimates"
+                  checked={settings.noisyVehicles}
+                  onChange={(checked) => update('noisyVehicles', checked)}
+                />
+                <button
+                  type="button"
+                  aria-label="Learn how vehicle measurement noise works"
+                  title="How does this noise work?"
+                  onClick={() => setNoiseInfoOpen(true)}
+                  className="absolute right-12 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-300 transition hover:border-emerald-300/40 hover:bg-emerald-400/15 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300"
+                >
+                  <CircleHelp size={14} />
+                </button>
+              </div>
               <Toggle
                 label="Actuator variation"
                 checked={settings.actuatorVariation}
@@ -128,6 +141,7 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
           </div>
         </div>
       ) : null}
+      <NoiseInfoDialog open={noiseInfoOpen} onOpenChange={setNoiseInfoOpen} />
     </section>
   );
 }
