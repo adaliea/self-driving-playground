@@ -316,6 +316,7 @@ function formatLane(details: Record<string, RuntimeValuePreview>): string[] {
 function formatVehicle(details: Record<string, RuntimeValuePreview>): string[] {
   const vehicle = details.vehicle;
   const relativeVy = numericValueAt(vehicle, ['relativeVy']);
+  const relativeHeading = numericValueAt(vehicle, ['relativeHeading']);
   return [
     '**Closest vehicle ahead**',
     '',
@@ -324,6 +325,7 @@ function formatVehicle(details: Record<string, RuntimeValuePreview>): string[] {
       ['Lane', number(details.laneIndex)],
       ['Gap', distance(vehicle, ['relativeY'])],
       ['Lateral offset', distance(vehicle, ['relativeX'])],
+      ['Relative yaw', relativeHeading === undefined ? '—' : `${formatNumber(relativeHeading * 180 / Math.PI, 1)}°`],
       ['Relative speed', relativeVy === undefined ? '—' : `${formatNumber(relativeVy, 2)} m/s · ${relativeVy < 0 ? 'closing' : 'opening'}`],
       ['Confidence', percentAt(vehicle, ['confidence'])],
     ]),

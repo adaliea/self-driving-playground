@@ -56,9 +56,20 @@ export interface AutopilotInput {
   ego: EgoState;
 
   /**
-   * Nearby detected vehicles in ego-relative coordinates.
+   * Stable vehicle tracks produced from the raw measurements.
+   *
+   * Tracks predict through short sensor dropouts and include velocity and
+   * uncertainty estimates. Most control examples should use this collection.
    */
-  vehicles: VehicleDetection[];
+  vehicles: VehicleTrack[];
+
+  /**
+   * Raw, intermittent vehicle observations before temporal tracking.
+   *
+   * Use these for perception and estimation experiments. A measurement can be
+   * absent for a frame even while its corresponding track remains in vehicles.
+   */
+  vehicleMeasurements: VehicleMeasurement[];
 
   /**
    * Detected lane-line samples in ego-relative coordinates.
@@ -96,9 +107,24 @@ export interface EgoState {
 }
 
 /**
- * A nearby vehicle detection in ego-relative coordinates.
+ * Uncertainty attached to one raw vehicle observation.
+ * Values are one-standard-deviation estimates in meters or radians.
  */
-export interface VehicleDetection {
+export interface VehicleMeasurementUncertainty {
+  lateralPosition: number;
+  longitudinalPosition: number;
+  heading: number;
+}
+
+/**
+ * One noisy sensor observation before temporal tracking.
+ */
+export interface VehicleMeasurement {
+  /**
+   * Association hint supplied by this playground's detector.
+   * It is stable for one simulated vehicle, but a production detector may not
+   * provide a reliable identity before tracking.
+   */
   id: string;
 
   /**
@@ -113,18 +139,70 @@ export interface VehicleDetection {
    */
   relativeY: number;
 
-  relativeVx: number;
-  relativeVy: number;
+  /**
+   * Observed vehicle yaw relative to ego heading, in radians.
+   * Positive angles rotate clockwise/right in the ego-relative top-down view.
+   */
+  relativeHeading: number;
 
   width: number;
   length: number;
   confidence: number;
+  uncertainty: VehicleMeasurementUncertainty;
 
   /**
-   * Estimated lane index if known.
+   * Lane associated with this measurement if known.
    */
   laneIndex?: number;
 }
+
+/**
+ * Uncertainty attached to a temporally filtered vehicle track.
+ * Values are one-standard-deviation estimates in meters, meters per second,
+ * or radians.
+ */
+export interface VehicleTrackUncertainty {
+  lateralPosition: number;
+  longitudinalPosition: number;
+  lateralVelocity: number;
+  longitudinalVelocity: number;
+  heading: number;
+}
+
+/**
+ * A tracker estimate for one nearby vehicle in ego-relative coordinates.
+ */
+export interface VehicleTrack {
+  /** Stable identity assigned by the tracker. */
+  id: string;
+
+  relativeX: number;
+  relativeY: number;
+  relativeVx: number;
+  relativeVy: number;
+  relativeHeading: number;
+  width: number;
+  length: number;
+  confidence: number;
+  laneIndex?: number;
+
+  /** Seconds since this track was initialized. */
+  age: number;
+
+  /** Seconds since a raw measurement last updated this track. */
+  timeSinceMeasurement: number;
+
+  /** True when this frame's pose is prediction-only because no measurement arrived. */
+  isPredicted: boolean;
+
+  uncertainty: VehicleTrackUncertainty;
+}
+
+/**
+ * Backwards-compatible name for a tracked vehicle.
+ * @deprecated Prefer VehicleTrack in new examples.
+ */
+export type VehicleDetection = VehicleTrack;
 
 /**
  * A sampled point on a detected lane line in ego-relative coordinates.

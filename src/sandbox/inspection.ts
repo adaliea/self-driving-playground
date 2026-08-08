@@ -2,6 +2,7 @@ export const INSPECTION_SAMPLE_INTERVAL_MS = 100;
 
 export const TOOLBOX_INSPECTORS = [
   'createPidController',
+  'createVehicleTracker',
   'analyzeLane',
   'analyzeLaneRegression',
   'analyzeTargetLane',
