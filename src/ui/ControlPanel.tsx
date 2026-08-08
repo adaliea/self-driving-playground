@@ -84,10 +84,9 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
                 checked={settings.noisyLaneLines}
                 onChange={(checked) => update('noisyLaneLines', checked)}
               />
-              <div className="relative">
+              <div className="grid grid-cols-[1fr_auto] items-stretch gap-2">
                 <Toggle
                   label="Noisy vehicle poses"
-                  detail="Raw pose noise, dropout & tracked estimates"
                   checked={settings.noisyVehicles}
                   onChange={(checked) => update('noisyVehicles', checked)}
                 />
@@ -96,7 +95,7 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
                   aria-label="Learn how vehicle measurement noise works"
                   title="How does this noise work?"
                   onClick={() => setNoiseInfoOpen(true)}
-                  className="absolute right-12 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-300 transition hover:border-emerald-300/40 hover:bg-emerald-400/15 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-300"
+                  className="flex h-full w-7 items-center justify-center rounded border border-border bg-card text-muted-foreground transition hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
                   <CircleHelp size={14} />
                 </button>
