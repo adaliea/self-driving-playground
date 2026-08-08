@@ -1,8 +1,16 @@
-import type { AutopilotInput, LaneLineDetections, LaneLineSample, PlaygroundSettings, VehicleDetection } from '../types';
+import type {
+  AutopilotInput,
+  LaneLineDetections,
+  LaneLineSample,
+  PlaygroundSettings,
+  VehicleMeasurement,
+  VehicleTrack,
+} from '../types';
 import { clamp, normalizeAngle } from './math';
 import type { Road } from './road';
 import type { SeededRandom } from './random';
 import type { VehicleState } from './vehicle';
+import { VehicleTracker } from './vehicleTracker';
 
 export interface SensorNoiseOptions {
   noisyLaneLines: boolean;
@@ -12,8 +20,6 @@ export interface SensorNoiseOptions {
 interface DetectionError {
   relativeX: number;
   relativeY: number;
-  relativeVx: number;
-  relativeVy: number;
   relativeHeading: number;
   width: number;
   length: number;
@@ -23,16 +29,30 @@ interface DetectionNoiseScale extends DetectionError {
   outlierProbability: number;
 }
 
-interface DetectionTrack {
-  error: DetectionError;
-  filtered: VehicleDetection;
+interface MeasurementNoiseState {
+  latentBias: DetectionError;
+  dropoutRemaining: number;
 }
 
+interface VehicleObservationFrame {
+  measurements: VehicleMeasurement[];
+  truthTracks: VehicleTrack[];
+}
+
+// Keep only a small colored component. Most raw detector uncertainty should be
+// fresh frame noise now that temporal filtering belongs to the tracker.
+const CORRELATED_BIAS_WEIGHT = 0.22;
+const INDEPENDENT_NOISE_WEIGHT = Math.sqrt(1 - CORRELATED_BIAS_WEIGHT ** 2);
+
 export class SensorSimulator {
-  private readonly detectionTracks = new Map<string, Map<string, DetectionTrack>>();
+  private readonly measurementNoise = new Map<string, Map<string, MeasurementNoiseState>>();
+  private readonly vehicleTrackers = new Map<string, VehicleTracker>();
+  private readonly trackerNoiseModes = new Map<string, boolean>();
 
   reset(): void {
-    this.detectionTracks.clear();
+    this.measurementNoise.clear();
+    this.vehicleTrackers.clear();
+    this.trackerNoiseModes.clear();
   }
 
   createInput(
@@ -51,10 +71,18 @@ export class SensorSimulator {
       laneIndex,
     };
 
+    const observation = this.observeVehicles(subject, vehicles, road, settings.noisyVehicles, rng, dt);
+    const tracker = this.getVehicleTracker(subject.id);
+    const previousNoiseMode = this.trackerNoiseModes.get(subject.id);
+    if (previousNoiseMode !== undefined && previousNoiseMode !== settings.noisyVehicles) tracker.reset();
+    this.trackerNoiseModes.set(subject.id, settings.noisyVehicles);
+    const tracks = tracker.update(observation.measurements, dt);
+
     return {
       dt,
       ego,
-      vehicles: this.detectVehicles(subject, vehicles, road, settings.noisyVehicles, rng, dt),
+      vehicles: tracks,
+      vehicleMeasurements: observation.measurements,
       laneLines: this.detectLaneLines(subject, road, settings.noisyLaneLines, rng),
       targetLane: clamp(subject.targetLane, 0, road.laneCount - 1),
     };
@@ -69,6 +97,7 @@ export class SensorSimulator {
   ): AutopilotInput {
     const laneIndex = road.getLaneIndex(subject.lateral);
 
+    const observation = this.observeVehicles(subject, vehicles, road, false, rng, dt);
     return {
       dt,
       ego: {
@@ -76,7 +105,8 @@ export class SensorSimulator {
         heading: subject.headingOffset,
         laneIndex,
       },
-      vehicles: this.detectVehicles(subject, vehicles, road, false, rng, dt),
+      vehicles: observation.truthTracks,
+      vehicleMeasurements: observation.measurements,
       laneLines: {
         left: [],
         right: [],
@@ -87,19 +117,22 @@ export class SensorSimulator {
     };
   }
 
-  private detectVehicles(
+  private observeVehicles(
     subject: VehicleState,
     vehicles: VehicleState[],
     road: Road,
     noisy: boolean,
     rng: SeededRandom,
     dt: number,
-  ): VehicleDetection[] {
+  ): VehicleObservationFrame {
     const subjectPose = road.worldPointAt(subject.s, subject.lateral);
     const subjectHeading = subjectPose.heading + subject.headingOffset;
     const forward = { x: Math.sin(subjectHeading), y: Math.cos(subjectHeading) };
     const right = { x: Math.cos(subjectHeading), y: -Math.sin(subjectHeading) };
-    const detections: VehicleDetection[] = [];
+    const measurements: VehicleMeasurement[] = [];
+    const truthTracks: VehicleTrack[] = [];
+    const visibleIds = new Set<string>();
+    const subjectNoise = this.getMeasurementNoiseMap(subject.id);
 
     for (const vehicle of vehicles) {
       if (vehicle.id === subject.id) continue;
@@ -112,15 +145,13 @@ export class SensorSimulator {
       const relativeHeading = normalizeAngle(vehicleHeading - subjectHeading);
 
       if (relativeY < -42 || relativeY > 135 || Math.abs(relativeX) > 20) continue;
+      visibleIds.add(vehicle.id);
       const forwardDistance = Math.max(0, relativeY);
       const range = Math.hypot(relativeX, relativeY);
       const distanceT = clamp(forwardDistance / 135, 0, 1);
       const lateralT = clamp(Math.abs(relativeX) / 20, 0, 1);
       const quality = clamp(1 - distanceT * 0.7 - lateralT * 0.15, 0.2, 1);
-      const missProbability = 0.003 + distanceT ** 2 * 0.055 + lateralT * 0.025;
-      if (noisy && rng.chance(missProbability)) continue;
-
-      const truth: VehicleDetection = {
+      const truth: VehicleTrack = {
         id: vehicle.id,
         relativeX,
         relativeY,
@@ -131,12 +162,50 @@ export class SensorSimulator {
         length: vehicle.length,
         confidence: 1,
         laneIndex: road.getLaneIndex(vehicle.lateral),
+        age: 0,
+        timeSinceMeasurement: 0,
+        isPredicted: false,
+        uncertainty: {
+          lateralPosition: 0,
+          longitudinalPosition: 0,
+          lateralVelocity: 0,
+          longitudinalVelocity: 0,
+          heading: 0,
+        },
       };
+      truthTracks.push(truth);
 
-      detections.push(noisy ? this.applyVehicleNoise(subject.id, truth, vehicle.lateral, range, quality, lateralT, road, rng, dt) : truth);
+      if (!noisy) {
+        measurements.push(measurementFromTruth(truth));
+        continue;
+      }
+
+      const scale = detectionNoiseScale(range, lateralT);
+      const previous = subjectNoise.get(vehicle.id);
+      const correlation = Math.exp(-Math.max(dt, 0) / 0.48);
+      const innovation = Math.sqrt(Math.max(0, 1 - correlation ** 2));
+      const outlierScale = rng.chance(scale.outlierProbability) ? rng.range(2.2, 3.8) : 1;
+      const latentBias = evolveDetectionError(previous?.latentBias, correlation, innovation, rng);
+      const independentError = sampleDetectionError(rng, outlierScale);
+      const combinedError = combineDetectionErrors(latentBias, independentError);
+      const noiseState: MeasurementNoiseState = {
+        latentBias,
+        dropoutRemaining: previous?.dropoutRemaining ?? 0,
+      };
+      subjectNoise.set(vehicle.id, noiseState);
+
+      if (shouldDropMeasurement(noiseState, distanceT, lateralT, rng, dt)) continue;
+      measurements.push(noisyMeasurement(truth, vehicle.lateral, scale, combinedError, quality, outlierScale, road, rng));
     }
 
-    return detections.sort((a, b) => a.relativeY - b.relativeY);
+    for (const id of subjectNoise.keys()) {
+      if (!visibleIds.has(id)) subjectNoise.delete(id);
+    }
+
+    return {
+      measurements: measurements.sort((a, b) => a.relativeY - b.relativeY),
+      truthTracks: truthTracks.sort((a, b) => a.relativeY - b.relativeY),
+    };
   }
 
   private detectLaneLines(subject: VehicleState, road: Road, noisy: boolean, rng: SeededRandom): LaneLineDetections {
@@ -184,47 +253,19 @@ export class SensorSimulator {
     return samples;
   }
 
-  private applyVehicleNoise(
-    subjectId: string,
-    truth: VehicleDetection,
-    vehicleLateral: number,
-    range: number,
-    quality: number,
-    lateralT: number,
-    road: Road,
-    rng: SeededRandom,
-    dt: number,
-  ): VehicleDetection {
-    const map = this.getSubjectMap(subjectId);
-    const previous = map.get(truth.id);
-    const scale = detectionNoiseScale(range, lateralT);
-    const correlation = Math.exp(-Math.max(dt, 0) / 0.48);
-    const innovation = Math.sqrt(Math.max(0, 1 - correlation ** 2));
-    const outlierScale = rng.chance(scale.outlierProbability) ? rng.range(2.2, 3.8) : 1;
-    const nextError = evolveDetectionError(previous?.error, scale, correlation, innovation * outlierScale, rng);
-    const raw: VehicleDetection = {
-      ...truth,
-      relativeX: truth.relativeX + nextError.relativeX,
-      relativeY: truth.relativeY + nextError.relativeY,
-      relativeVx: truth.relativeVx + nextError.relativeVx,
-      relativeVy: truth.relativeVy + nextError.relativeVy,
-      relativeHeading: normalizeAngle(truth.relativeHeading + nextError.relativeHeading),
-      width: Math.max(1.4, truth.width + nextError.width),
-      length: Math.max(3.4, truth.length + nextError.length),
-      confidence: clamp(quality - (outlierScale > 1 ? 0.16 : 0) + rng.gaussian(0, 0.025), 0.25, 0.99),
-      laneIndex: road.getLaneIndex(vehicleLateral + nextError.relativeX * 0.55),
-    };
-
-    const filtered = previous ? filterDetection(previous.filtered, raw, dt) : raw;
-    map.set(truth.id, { error: nextError, filtered });
-    return filtered;
+  private getMeasurementNoiseMap(subjectId: string): Map<string, MeasurementNoiseState> {
+    const existing = this.measurementNoise.get(subjectId);
+    if (existing) return existing;
+    const next = new Map<string, MeasurementNoiseState>();
+    this.measurementNoise.set(subjectId, next);
+    return next;
   }
 
-  private getSubjectMap(subjectId: string): Map<string, DetectionTrack> {
-    const existing = this.detectionTracks.get(subjectId);
+  private getVehicleTracker(subjectId: string): VehicleTracker {
+    const existing = this.vehicleTrackers.get(subjectId);
     if (existing) return existing;
-    const next = new Map<string, DetectionTrack>();
-    this.detectionTracks.set(subjectId, next);
+    const next = new VehicleTracker();
+    this.vehicleTrackers.set(subjectId, next);
     return next;
   }
 }
@@ -235,8 +276,6 @@ function detectionNoiseScale(range: number, lateralT: number): DetectionNoiseSca
     // Camera geometry constrains image-plane/lateral position better than depth.
     relativeX: 0.035 + distance * 0.0022 + distance ** 2 * 0.000018 + lateralT * 0.08,
     relativeY: 0.08 + distance * 0.006 + distance ** 2 * 0.000095,
-    relativeVx: 0.08 + distance * 0.003,
-    relativeVy: 0.12 + distance * 0.005,
     relativeHeading: degreesToRadians(1 + distance * 0.04 + distance ** 2 * 0.00025 + lateralT * 2),
     width: 0.03 + distance * 0.00065,
     length: 0.06 + distance * 0.0018,
@@ -246,40 +285,114 @@ function detectionNoiseScale(range: number, lateralT: number): DetectionNoiseSca
 
 function evolveDetectionError(
   previous: DetectionError | undefined,
-  scale: DetectionNoiseScale,
   correlation: number,
   innovation: number,
   rng: SeededRandom,
 ): DetectionError {
   const evolve = (key: keyof DetectionError): number => {
-    if (!previous) return rng.gaussian(0, scale[key]);
-    return previous[key] * correlation + rng.gaussian(0, scale[key] * innovation);
+    if (!previous) return rng.gaussian(0, 1);
+    return previous[key] * correlation + rng.gaussian(0, innovation);
   };
   return {
     relativeX: evolve('relativeX'),
     relativeY: evolve('relativeY'),
-    relativeVx: evolve('relativeVx'),
-    relativeVy: evolve('relativeVy'),
     relativeHeading: evolve('relativeHeading'),
     width: evolve('width'),
     length: evolve('length'),
   };
 }
 
-function filterDetection(previous: VehicleDetection, next: VehicleDetection, dt: number): VehicleDetection {
-  const alpha = 1 - Math.exp(-Math.max(dt, 0) / 0.11);
+function sampleDetectionError(rng: SeededRandom, standardDeviation = 1): DetectionError {
   return {
-    ...next,
-    relativeX: previous.relativeX + (next.relativeX - previous.relativeX) * alpha,
-    relativeY: previous.relativeY + (next.relativeY - previous.relativeY) * alpha,
-    relativeVx: previous.relativeVx + (next.relativeVx - previous.relativeVx) * alpha,
-    relativeVy: previous.relativeVy + (next.relativeVy - previous.relativeVy) * alpha,
-    relativeHeading: normalizeAngle(
-      previous.relativeHeading + normalizeAngle(next.relativeHeading - previous.relativeHeading) * alpha,
-    ),
-    width: previous.width + (next.width - previous.width) * alpha,
-    length: previous.length + (next.length - previous.length) * alpha,
+    relativeX: rng.gaussian(0, standardDeviation),
+    relativeY: rng.gaussian(0, standardDeviation),
+    relativeHeading: rng.gaussian(0, standardDeviation),
+    width: rng.gaussian(0, standardDeviation),
+    length: rng.gaussian(0, standardDeviation),
   };
+}
+
+function combineDetectionErrors(bias: DetectionError, independent: DetectionError): DetectionError {
+  const combine = (key: keyof DetectionError): number =>
+    bias[key] * CORRELATED_BIAS_WEIGHT + independent[key] * INDEPENDENT_NOISE_WEIGHT;
+  return {
+    relativeX: combine('relativeX'),
+    relativeY: combine('relativeY'),
+    relativeHeading: combine('relativeHeading'),
+    width: combine('width'),
+    length: combine('length'),
+  };
+}
+
+function noisyMeasurement(
+  truth: VehicleTrack,
+  vehicleLateral: number,
+  scale: DetectionNoiseScale,
+  error: DetectionError,
+  quality: number,
+  outlierScale: number,
+  road: Road,
+  rng: SeededRandom,
+): VehicleMeasurement {
+  const lateralError = error.relativeX * scale.relativeX;
+  const uncertaintyMultiplier = Math.hypot(
+    CORRELATED_BIAS_WEIGHT,
+    INDEPENDENT_NOISE_WEIGHT * outlierScale,
+  );
+  return {
+    id: truth.id,
+    relativeX: truth.relativeX + lateralError,
+    relativeY: truth.relativeY + error.relativeY * scale.relativeY,
+    relativeHeading: normalizeAngle(truth.relativeHeading + error.relativeHeading * scale.relativeHeading),
+    width: Math.max(1.4, truth.width + error.width * scale.width),
+    length: Math.max(3.4, truth.length + error.length * scale.length),
+    confidence: clamp(quality - (outlierScale > 1 ? 0.16 : 0) + rng.gaussian(0, 0.025), 0.25, 0.99),
+    laneIndex: road.getLaneIndex(vehicleLateral + lateralError * 0.55),
+    uncertainty: {
+      lateralPosition: scale.relativeX * uncertaintyMultiplier,
+      longitudinalPosition: scale.relativeY * uncertaintyMultiplier,
+      heading: scale.relativeHeading * uncertaintyMultiplier,
+    },
+  };
+}
+
+function measurementFromTruth(truth: VehicleTrack): VehicleMeasurement {
+  return {
+    id: truth.id,
+    relativeX: truth.relativeX,
+    relativeY: truth.relativeY,
+    relativeHeading: truth.relativeHeading,
+    width: truth.width,
+    length: truth.length,
+    confidence: 1,
+    laneIndex: truth.laneIndex,
+    uncertainty: {
+      lateralPosition: 0,
+      longitudinalPosition: 0,
+      heading: 0,
+    },
+  };
+}
+
+function shouldDropMeasurement(
+  state: MeasurementNoiseState,
+  distanceT: number,
+  lateralT: number,
+  rng: SeededRandom,
+  dt: number,
+): boolean {
+  if (state.dropoutRemaining > 0) {
+    state.dropoutRemaining = Math.max(0, state.dropoutRemaining - dt);
+    return true;
+  }
+
+  // Dropouts begin infrequently but persist for a short burst. This produces
+  // realistic missed-observation runs without making the tracker output flicker.
+  const startsPerSecond = 0.015 + distanceT ** 2 * 0.19 + lateralT * 0.07;
+  const startProbability = 1 - Math.exp(-startsPerSecond * Math.max(dt, 0));
+  if (!rng.chance(startProbability)) return false;
+  state.dropoutRemaining = rng.range(0.055, 0.22);
+  return true;
 }
 
 function degreesToRadians(degrees: number): number {

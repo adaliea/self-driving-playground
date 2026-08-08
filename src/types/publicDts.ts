@@ -47,11 +47,16 @@ interface AutopilotInput {
   ego: EgoState;
 
   /**
-   * Nearby detected vehicles in ego-relative coordinates.
-   *
-   * Positive relativeY means ahead. Negative relativeX means left.
+   * Stable, temporally filtered vehicle tracks in ego-relative coordinates.
+   * Tracks predict through short raw-sensor dropouts.
    */
-  vehicles: VehicleDetection[];
+  vehicles: VehicleTrack[];
+
+  /**
+   * Raw vehicle observations before temporal tracking.
+   * Measurements are noisy and may be absent during sensor dropouts.
+   */
+  vehicleMeasurements: VehicleMeasurement[];
 
   /**
    * Detected lane-line samples in ego-relative coordinates.
@@ -78,50 +83,81 @@ interface EgoState {
   laneIndex: number;
 }
 
-interface VehicleDetection {
+interface VehicleMeasurementUncertainty {
+  /** One-standard-deviation lateral position uncertainty, in meters. */
+  lateralPosition: number;
+  /** One-standard-deviation longitudinal position uncertainty, in meters. */
+  longitudinalPosition: number;
+  /** One-standard-deviation heading uncertainty, in radians. */
+  heading: number;
+}
+
+/**
+ * One noisy vehicle observation before temporal tracking.
+ */
+interface VehicleMeasurement {
   /**
-   * Stable id for this detected vehicle.
+   * Association hint supplied by the playground detector.
+   * A production detector may not provide a stable id before tracking.
    */
   id: string;
   /** Lateral position relative to ego, in meters. Negative means left, positive means right. */
   relativeX: number;
   /** Longitudinal position relative to ego, in meters. Positive means ahead, negative means behind. */
   relativeY: number;
-  /**
-   * Lateral relative velocity estimate in meters per second.
-   */
-  relativeVx: number;
-
-  /**
-   * Longitudinal relative velocity estimate in meters per second.
-   *
-   * Negative means the detected vehicle is slower than ego.
-   */
-  relativeVy: number;
-
-  /**
-   * Detected vehicle yaw relative to ego heading, in radians.
-   * Positive angles turn toward ego's right.
-   */
+  /** Observed vehicle yaw relative to ego heading, in radians. */
   relativeHeading: number;
-
-  /**
-   * Estimated vehicle width in meters.
-   */
+  /** Observed vehicle width in meters. */
   width: number;
-
-  /**
-   * Estimated vehicle length in meters.
-   */
+  /** Observed vehicle length in meters. */
   length: number;
-
-  /**
-   * Detection confidence from 0 to 1.
-   */
+  /** Measurement confidence from 0 to 1. */
   confidence: number;
-  /** Estimated lane index if known. */
+  /** Estimated one-standard-deviation measurement error. */
+  uncertainty: VehicleMeasurementUncertainty;
+  /** Lane associated with this measurement if known. */
   laneIndex?: number;
 }
+
+interface VehicleTrackUncertainty {
+  /** One-standard-deviation lateral position uncertainty, in meters. */
+  lateralPosition: number;
+  /** One-standard-deviation longitudinal position uncertainty, in meters. */
+  longitudinalPosition: number;
+  /** One-standard-deviation lateral velocity uncertainty, in meters per second. */
+  lateralVelocity: number;
+  /** One-standard-deviation longitudinal velocity uncertainty, in meters per second. */
+  longitudinalVelocity: number;
+  /** One-standard-deviation heading uncertainty, in radians. */
+  heading: number;
+}
+
+/**
+ * A temporally filtered and predicted vehicle estimate.
+ */
+interface VehicleTrack {
+  /** Stable identity assigned by the tracker. */
+  id: string;
+  relativeX: number;
+  relativeY: number;
+  relativeVx: number;
+  relativeVy: number;
+  relativeHeading: number;
+  width: number;
+  length: number;
+  confidence: number;
+  laneIndex?: number;
+  /** Seconds since this track was initialized. */
+  age: number;
+  /** Seconds since the last raw observation updated this track. */
+  timeSinceMeasurement: number;
+  /** True when this frame is a prediction with no matching raw observation. */
+  isPredicted: boolean;
+  uncertainty: VehicleTrackUncertainty;
+}
+
+/** @deprecated Prefer VehicleTrack in new controller code. */
+type VehicleDetection = VehicleTrack;
 
 interface LaneLineSample {
   /** Lateral position relative to ego, in meters. */

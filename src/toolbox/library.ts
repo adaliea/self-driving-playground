@@ -13,6 +13,228 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }`;
 
+export const vehicleTrackerImplementation = `/**
+ * Tuning options for the educational constant-velocity vehicle tracker.
+ */
+interface VehicleTrackerOptions {
+  /** Seconds to publish predictions without a matching measurement. Default: 0.42. */
+  maxPredictionTime?: number;
+  /** Expected relative acceleration in meters per second squared. Default: 3.2. */
+  accelerationStdDev?: number;
+}
+
+/** Stateful tracker returned by createVehicleTracker. */
+interface VehicleTracker {
+  /** Predicts existing tracks, incorporates this frame's measurements, and returns current tracks. */
+  update(measurements: VehicleMeasurement[], dt: number): VehicleTrack[];
+  /** Removes all track history. */
+  reset(): void;
+}
+
+interface VehicleTrackerAxisState {
+  position: number;
+  velocity: number;
+  p00: number;
+  p01: number;
+  p11: number;
+}
+
+interface VehicleTrackerState {
+  id: string;
+  x: VehicleTrackerAxisState;
+  y: VehicleTrackerAxisState;
+  heading: number;
+  headingVariance: number;
+  width: number;
+  length: number;
+  confidence: number;
+  laneIndex?: number;
+  age: number;
+  timeSinceMeasurement: number;
+  isPredicted: boolean;
+}
+
+/**
+ * Creates a small constant-velocity Kalman tracker for input.vehicleMeasurements.
+ *
+ * Keep the returned object outside autopilot(input) so its state survives from
+ * one control tick to the next. The playground supplies stable measurement ids
+ * to keep this lesson focused on filtering; production trackers also need data
+ * association.
+ */
+function createVehicleTracker(options: VehicleTrackerOptions = {}): VehicleTracker {
+  const states = new Map<string, VehicleTrackerState>();
+  const maxPredictionTime = options.maxPredictionTime ?? 0.42;
+  const accelerationStdDev = options.accelerationStdDev ?? 3.2;
+
+  return {
+    update(measurements: VehicleMeasurement[], dt: number): VehicleTrack[] {
+      const safeDt = clamp(dt, 0, 0.25);
+
+      for (const state of states.values()) {
+        predictVehicleTrackerAxis(state.x, safeDt, accelerationStdDev);
+        predictVehicleTrackerAxis(state.y, safeDt, accelerationStdDev);
+        state.headingVariance += Math.pow(5 * Math.PI / 180, 2) * safeDt;
+        state.age += safeDt;
+        state.timeSinceMeasurement += safeDt;
+        state.isPredicted = true;
+        state.confidence *= Math.exp(-safeDt / 0.34);
+      }
+
+      for (const measurement of measurements) {
+        let state = states.get(measurement.id);
+        if (!state) {
+          state = initializeVehicleTrackerState(measurement, safeDt);
+          states.set(measurement.id, state);
+          continue;
+        }
+
+        updateVehicleTrackerAxis(
+          state.x,
+          measurement.relativeX,
+          Math.pow(measurement.uncertainty.lateralPosition, 2)
+        );
+        updateVehicleTrackerAxis(
+          state.y,
+          measurement.relativeY,
+          Math.pow(measurement.uncertainty.longitudinalPosition, 2)
+        );
+
+        const headingNoise = Math.max(Math.pow(measurement.uncertainty.heading, 2), 1e-6);
+        const headingGain = state.headingVariance / (state.headingVariance + headingNoise);
+        state.heading = normalizeTrackerAngle(
+          state.heading + headingGain * normalizeTrackerAngle(measurement.relativeHeading - state.heading)
+        );
+        state.headingVariance = Math.max(1e-9, (1 - headingGain) * state.headingVariance);
+        state.width += (measurement.width - state.width) * 0.28;
+        state.length += (measurement.length - state.length) * 0.22;
+        state.confidence = clamp(state.confidence * 0.58 + measurement.confidence * 0.42, 0, 1);
+        state.laneIndex = measurement.laneIndex;
+        state.timeSinceMeasurement = 0;
+        state.isPredicted = false;
+      }
+
+      for (const [id, state] of states) {
+        if (state.timeSinceMeasurement > maxPredictionTime) states.delete(id);
+      }
+
+      return Array.from(states.values())
+        .map(vehicleTrackFromState)
+        .sort((a, b) => a.relativeY - b.relativeY);
+    },
+
+    reset(): void {
+      states.clear();
+    },
+  };
+}
+
+function initializeVehicleTrackerState(
+  measurement: VehicleMeasurement,
+  dt: number
+): VehicleTrackerState {
+  return {
+    id: measurement.id,
+    x: initializeVehicleTrackerAxis(
+      measurement.relativeX,
+      Math.pow(measurement.uncertainty.lateralPosition, 2)
+    ),
+    y: initializeVehicleTrackerAxis(
+      measurement.relativeY,
+      Math.pow(measurement.uncertainty.longitudinalPosition, 2)
+    ),
+    heading: measurement.relativeHeading,
+    headingVariance: Math.max(Math.pow(measurement.uncertainty.heading, 2), 1e-6),
+    width: measurement.width,
+    length: measurement.length,
+    confidence: measurement.confidence,
+    laneIndex: measurement.laneIndex,
+    age: dt,
+    timeSinceMeasurement: 0,
+    isPredicted: false,
+  };
+}
+
+function initializeVehicleTrackerAxis(
+  position: number,
+  positionVariance: number
+): VehicleTrackerAxisState {
+  return {
+    position,
+    velocity: 0,
+    p00: Math.max(positionVariance, 1e-6),
+    p01: 0,
+    // One box does not reveal velocity, so the initial velocity covariance is intentionally high.
+    p11: 36,
+  };
+}
+
+function predictVehicleTrackerAxis(
+  axis: VehicleTrackerAxisState,
+  dt: number,
+  accelerationStdDev: number
+): void {
+  const accelerationVariance = Math.pow(accelerationStdDev, 2);
+  const oldP01 = axis.p01;
+  const oldP11 = axis.p11;
+  axis.position += axis.velocity * dt;
+  axis.p00 += 2 * dt * oldP01 + Math.pow(dt, 2) * oldP11 +
+    0.25 * Math.pow(dt, 4) * accelerationVariance;
+  axis.p01 += dt * oldP11 + 0.5 * Math.pow(dt, 3) * accelerationVariance;
+  axis.p11 += Math.pow(dt, 2) * accelerationVariance;
+}
+
+function updateVehicleTrackerAxis(
+  axis: VehicleTrackerAxisState,
+  measurement: number,
+  measurementVariance: number
+): void {
+  const innovationVariance = axis.p00 + Math.max(measurementVariance, 1e-6);
+  const positionGain = axis.p00 / innovationVariance;
+  const velocityGain = axis.p01 / innovationVariance;
+  const innovation = measurement - axis.position;
+  const oldP00 = axis.p00;
+  const oldP01 = axis.p01;
+  const oldP11 = axis.p11;
+  axis.position += positionGain * innovation;
+  axis.velocity += velocityGain * innovation;
+  axis.p00 = Math.max(1e-9, (1 - positionGain) * oldP00);
+  axis.p01 = (1 - positionGain) * oldP01;
+  axis.p11 = Math.max(1e-9, oldP11 - velocityGain * oldP01);
+}
+
+function vehicleTrackFromState(state: VehicleTrackerState): VehicleTrack {
+  return {
+    id: state.id,
+    relativeX: state.x.position,
+    relativeY: state.y.position,
+    relativeVx: state.x.velocity,
+    relativeVy: state.y.velocity,
+    relativeHeading: state.heading,
+    width: state.width,
+    length: state.length,
+    confidence: clamp(state.confidence, 0, 1),
+    laneIndex: state.laneIndex,
+    age: state.age,
+    timeSinceMeasurement: state.timeSinceMeasurement,
+    isPredicted: state.isPredicted,
+    uncertainty: {
+      lateralPosition: Math.sqrt(state.x.p00),
+      longitudinalPosition: Math.sqrt(state.y.p00),
+      lateralVelocity: Math.sqrt(state.x.p11),
+      longitudinalVelocity: Math.sqrt(state.y.p11),
+      heading: Math.sqrt(state.headingVariance),
+    },
+  };
+}
+
+function normalizeTrackerAngle(angle: number): number {
+  let result = angle;
+  while (result > Math.PI) result -= Math.PI * 2;
+  while (result < -Math.PI) result += Math.PI * 2;
+  return result;
+}`;
+
 export const vehicleFilteringImplementation = `/**
  * Returns detections whose estimated lane matches laneIndex.
  *
@@ -379,4 +601,5 @@ export const toolboxLibrarySource = [
   accelerationFeedforwardImplementation,
   curveRegressionImplementation,
   adaptiveCruiseImplementation,
+  vehicleTrackerImplementation,
 ].join('\n\n');

@@ -11,4 +11,8 @@ export type {
   PlaygroundSettings,
   SanitizedAutopilotOutput,
   VehicleDetection,
+  VehicleMeasurement,
+  VehicleMeasurementUncertainty,
+  VehicleTrack,
+  VehicleTrackUncertainty,
 } from './autopilot';
