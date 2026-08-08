@@ -62,7 +62,7 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
 }
 ```
 
-The editor exposes documented public types for `AutopilotInput`, `AutopilotOutput`, vehicle detections, and lane-line samples. The simulator clamps invalid `motor` and `steering` values to `[-1, 1]` and ignores untrusted fields for physics.
+The editor exposes documented public types for `AutopilotInput`, `AutopilotOutput`, vehicle detections, and lane-line samples. Vehicle detections include noisy ego-relative position, velocity, dimensions, and `relativeHeading` yaw. The simulator clamps invalid `motor` and `steering` values to `[-1, 1]` and ignores untrusted fields for physics.
 
 ## Sandbox Model
 
@@ -84,7 +84,9 @@ Current limitations:
 - Steering has actuator smoothing and road-curvature-relative heading dynamics.
 - Traffic uses the same normalized controller output shape as ego controllers, with built-in lane centering, adaptive speed control, target-lane changes, varied driving personalities, and mixed lane-control models.
 - Ego assist uses the same user-facing sensor inputs as user code, but runs stronger lateral-velocity lane keeping and adaptive cruise controllers.
-- Sensors produce ego-relative bounding boxes and lane-line samples, with optional distance-scaled jitter, missing samples, degraded confidence, and smoothing delay. Lane-line sampling is denser near the ego vehicle.
+- Sensors produce ego-relative oriented vehicle boxes and lane-line samples. Vehicle pose noise is anisotropic, distance-scaled, temporally correlated, occasionally heavy-tailed, filtered, and subject to missed detections. Lane-line sampling is denser near the ego vehicle.
+
+The rationale, approximate error profile, source research, and physics-engine recommendation are documented in [Vision pose noise and vehicle physics](docs/vision-noise-and-physics.md).
 
 Known simplifications:
 
