@@ -104,13 +104,6 @@ export class CanvasRenderer {
       }
     }
 
-    const north = this.worldToScreen({ x: snapshot.camera.x, y: snapshot.camera.y + 18 }, snapshot);
-    const origin = this.relativeToScreen(0, 0);
-    ctx.strokeStyle = 'rgba(247, 200, 109, 0.45)';
-    ctx.beginPath();
-    ctx.moveTo(origin.x, origin.y);
-    ctx.lineTo(north.x, north.y);
-    ctx.stroke();
     ctx.restore();
   }
 
@@ -191,11 +184,43 @@ export class CanvasRenderer {
     ctx.fillStyle = vehicle.kind === 'ego' ? '#6df7d1' : '#dce8ee';
     ctx.globalAlpha = vehicle.kind === 'ego' ? 0.95 : 0.45;
     ctx.fillRect(-width * 0.24, -length * 0.49, width * 0.48, 2);
-    ctx.restore();
 
-    if (vehicle.kind === 'ego') {
-      this.drawSteeringVector(screen, snapshot.telemetry.actualSteering);
+    this.drawTurnSignals(vehicle, width, length);
+    ctx.restore();
+  }
+
+  private drawTurnSignals(vehicle: RenderVehicle, width: number, length: number): void {
+    const direction = Math.sign(vehicle.targetLane - vehicle.laneIndex);
+    if (direction === 0) return;
+
+    // Keep the indicators blinking even when the simulation is paused.
+    const isLit = Math.floor(performance.now() / 420) % 2 === 0;
+    if (!isLit) return;
+
+    const ctx = this.ctx;
+    const sideX = direction < 0 ? -width / 2 : width / 2;
+    const insetX = direction < 0 ? 1.4 : -1.4;
+    const signalWidth = Math.max(3.5, width * 0.18);
+    const signalHeight = Math.max(3, length * 0.055);
+
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ffb629';
+    ctx.shadowColor = '#ff9d00';
+    ctx.shadowBlur = vehicle.kind === 'ego' ? 14 : 10;
+
+    for (const y of [-length * 0.38, length * 0.38]) {
+      roundedRect(
+        ctx,
+        sideX + insetX - signalWidth / 2,
+        y - signalHeight / 2,
+        signalWidth,
+        signalHeight,
+        signalHeight / 2,
+      );
+      ctx.fill();
     }
+    ctx.restore();
   }
 
   private drawLaneSamples(snapshot: RenderSnapshot, scale: number): void {
@@ -222,20 +247,8 @@ export class CanvasRenderer {
 
   private drawDetections(snapshot: RenderSnapshot, scale: number): void {
     if (!snapshot.settings.debugOverlays) return;
-    const ctx = this.ctx;
     for (const measurement of snapshot.sensors.measurements) this.drawMeasurement(measurement, scale);
     for (const track of snapshot.sensors.tracks) this.drawTrack(track, scale);
-
-    ctx.save();
-    ctx.strokeStyle = 'rgba(109, 247, 209, 0.11)';
-    ctx.lineWidth = 1;
-    const origin = this.relativeToScreen(0, 0);
-    for (const distance of [24, 48, 72, 96]) {
-      ctx.beginPath();
-      ctx.ellipse(origin.x, origin.y, distance * scale * 0.55, distance * scale, 0, Math.PI * 1.1, Math.PI * 1.9);
-      ctx.stroke();
-    }
-    ctx.restore();
   }
 
   private drawMeasurement(measurement: VehicleMeasurement, scale: number): void {
@@ -351,21 +364,6 @@ export class CanvasRenderer {
     ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(109, 247, 209, 0.72)';
     ctx.fillText('PREDICTED', x + 34, y + 49);
-    ctx.restore();
-  }
-
-  private drawSteeringVector(origin: ScreenPoint, steering: number): void {
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.translate(origin.x, origin.y);
-    ctx.strokeStyle = '#6df7d1';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(109, 247, 209, 0.45)';
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    ctx.moveTo(0, -18);
-    ctx.quadraticCurveTo(steering * 36, -38, steering * 52, -56);
-    ctx.stroke();
     ctx.restore();
   }
 
