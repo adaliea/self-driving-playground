@@ -1,5 +1,5 @@
 import type { LaneLineSample, VehicleMeasurement, VehicleTrack } from '../types';
-import type { RenderPoint, RenderSnapshot, RenderVehicle } from './types';
+import type { CollisionKind, RenderCollisionEvent, RenderPoint, RenderSnapshot, RenderVehicle } from './types';
 
 interface ScreenPoint {
   x: number;
@@ -39,8 +39,10 @@ export class CanvasRenderer {
     this.drawLaneSamples(snapshot, scale);
     this.drawVehicles(snapshot);
     this.drawDetections(snapshot, scale);
+    this.drawCollisionEffects(snapshot);
     this.drawPerceptionLegend(snapshot);
     this.drawControlOverlay(snapshot);
+    this.drawEgoCollisionFeedback(snapshot);
   }
 
   private get scale(): number {
@@ -165,16 +167,34 @@ export class CanvasRenderer {
     const width = vehicle.width * scale;
     const length = vehicle.length * scale;
     const relativeHeading = vehicle.heading - snapshot.camera.heading;
+    const impactIntensity = this.vehicleImpactIntensity(snapshot, vehicle.id);
 
     ctx.save();
     ctx.translate(screen.x, screen.y);
     ctx.rotate(relativeHeading);
 
-    ctx.shadowBlur = vehicle.kind === 'ego' ? 22 : 10;
-    ctx.shadowColor = vehicle.kind === 'ego' ? 'rgba(109, 247, 209, 0.55)' : 'rgba(137, 169, 255, 0.20)';
+    ctx.shadowBlur = impactIntensity > 0 ? 16 + impactIntensity * 24 : vehicle.kind === 'ego' ? 22 : 10;
+    ctx.shadowColor = impactIntensity > 0
+      ? `rgba(255, 84, 61, ${0.45 + impactIntensity * 0.45})`
+      : vehicle.kind === 'ego'
+        ? 'rgba(109, 247, 209, 0.55)'
+        : 'rgba(137, 169, 255, 0.20)';
     ctx.fillStyle = vehicle.collision ? '#ff6b6b' : vehicle.color;
     roundedRect(ctx, -width / 2, -length / 2, width, length, Math.min(6, width * 0.22));
     ctx.fill();
+
+    if (impactIntensity > 0) {
+      ctx.globalAlpha = impactIntensity * 0.5;
+      ctx.fillStyle = '#ff4938';
+      roundedRect(ctx, -width / 2, -length / 2, width, length, Math.min(6, width * 0.22));
+      ctx.fill();
+      ctx.globalAlpha = 0.45 + impactIntensity * 0.5;
+      ctx.strokeStyle = '#ffd6c9';
+      ctx.lineWidth = 1.2 + impactIntensity * 1.8;
+      roundedRect(ctx, -width / 2, -length / 2, width, length, Math.min(6, width * 0.22));
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
 
     ctx.shadowBlur = 0;
     ctx.fillStyle = vehicle.kind === 'ego' ? '#0c2426' : '#17242a';
@@ -186,6 +206,119 @@ export class CanvasRenderer {
     ctx.fillRect(-width * 0.24, -length * 0.49, width * 0.48, 2);
 
     this.drawTurnSignals(vehicle, width, length);
+    ctx.restore();
+  }
+
+  private vehicleImpactIntensity(snapshot: RenderSnapshot, vehicleId: string): number {
+    let intensity = 0;
+    for (const event of snapshot.collisionEvents) {
+      if (!event.vehicleIds.includes(vehicleId)) continue;
+      const progress = clamp01(event.age / event.duration);
+      intensity = Math.max(intensity, (1 - progress) ** 1.35);
+    }
+    return intensity;
+  }
+
+  private drawCollisionEffects(snapshot: RenderSnapshot): void {
+    const ctx = this.ctx;
+    for (const event of snapshot.collisionEvents) {
+      const progress = clamp01(event.age / event.duration);
+      const fade = (1 - progress) ** 1.45;
+      const point = this.worldToScreen(event.point, snapshot);
+      const radius = 9 + progress * (34 + event.severity * 20);
+      if (point.x < -radius || point.x > this.width + radius || point.y < -radius || point.y > this.height + radius) {
+        continue;
+      }
+
+      ctx.save();
+      ctx.translate(point.x, point.y);
+
+      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.15);
+      glow.addColorStop(0, `rgba(255, 244, 205, ${fade * 0.75})`);
+      glow.addColorStop(0.18, `rgba(255, 112, 61, ${fade * 0.42})`);
+      glow.addColorStop(1, 'rgba(255, 49, 34, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 1.15, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = fade;
+      ctx.strokeStyle = '#ff694f';
+      ctx.lineWidth = 1.4 + event.severity * 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.globalAlpha = fade * 0.9;
+      ctx.strokeStyle = '#ffe0a6';
+      ctx.lineWidth = 1 + event.severity;
+      const seed = hashString(event.id);
+      for (let index = 0; index < 9; index += 1) {
+        const angle = seed * 0.0001 + index * 2.39996;
+        const sparkLength = (8 + ((seed >> (index % 12)) & 7)) * (0.7 + event.severity * 0.5);
+        const sparkStart = 4 + progress * sparkLength * 0.75;
+        const sparkEnd = sparkStart + sparkLength * (1 - progress * 0.45);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(angle) * sparkStart, Math.sin(angle) * sparkStart);
+        ctx.lineTo(Math.cos(angle) * sparkEnd, Math.sin(angle) * sparkEnd);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  private drawEgoCollisionFeedback(snapshot: RenderSnapshot): void {
+    const event = snapshot.collisionEvents
+      .filter((candidate) => candidate.egoInvolved)
+      .sort((a, b) => a.age - b.age)[0];
+    if (!event) return;
+
+    const ctx = this.ctx;
+    const progress = clamp01(event.age / event.duration);
+    const fade = (1 - progress) ** 1.7;
+    const initialFlash = Math.max(0, 1 - progress / 0.2);
+    const edgeRadius = Math.hypot(this.width, this.height) * 0.62;
+
+    ctx.save();
+    if (initialFlash > 0) {
+      ctx.fillStyle = `rgba(255, 63, 42, ${initialFlash * (0.08 + event.severity * 0.1)})`;
+      ctx.fillRect(0, 0, this.width, this.height);
+    }
+
+    const vignette = ctx.createRadialGradient(
+      this.width / 2,
+      this.height * 0.52,
+      edgeRadius * 0.28,
+      this.width / 2,
+      this.height * 0.52,
+      edgeRadius,
+    );
+    vignette.addColorStop(0, 'rgba(123, 10, 5, 0)');
+    vignette.addColorStop(0.58, `rgba(171, 18, 9, ${fade * 0.05})`);
+    vignette.addColorStop(1, `rgba(255, 48, 28, ${fade * (0.22 + event.severity * 0.12)})`);
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    ctx.globalAlpha = fade * 0.9;
+    ctx.strokeStyle = '#ff5c43';
+    ctx.lineWidth = 2 + event.severity * 2;
+    ctx.strokeRect(2, 2, this.width - 4, this.height - 4);
+
+    const label = `EGO IMPACT  /  ${collisionLabel(event.kind)}`;
+    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    const labelWidth = Math.ceil(ctx.measureText(label).width) + 30;
+    const labelX = (this.width - labelWidth) / 2;
+    const labelY = 18;
+    ctx.fillStyle = 'rgba(35, 7, 5, 0.9)';
+    ctx.strokeStyle = 'rgba(255, 108, 77, 0.9)';
+    ctx.lineWidth = 1;
+    roundedRect(ctx, labelX, labelY, labelWidth, 30, 4);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#ffd8c8';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, this.width / 2, labelY + 15);
     ctx.restore();
   }
 
@@ -447,4 +580,23 @@ function roundedRect(
   ctx.lineTo(x, y + r);
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function hashString(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function collisionLabel(kind: CollisionKind): string {
+  if (kind === 'rear-end') return 'REAR IMPACT';
+  if (kind === 'sideswipe') return 'SIDESWIPE';
+  return 'CORNER CONTACT';
 }

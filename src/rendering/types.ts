@@ -38,6 +38,19 @@ export interface RenderVehicle {
   personality?: string;
 }
 
+export type CollisionKind = 'rear-end' | 'sideswipe' | 'corner';
+
+export interface RenderCollisionEvent {
+  id: string;
+  vehicleIds: [string, string];
+  point: RenderPoint;
+  kind: CollisionKind;
+  egoInvolved: boolean;
+  severity: number;
+  age: number;
+  duration: number;
+}
+
 export interface RenderCamera {
   x: number;
   y: number;
@@ -76,6 +89,7 @@ export interface RenderSnapshot {
     lines: RenderRoadLine[];
   };
   vehicles: RenderVehicle[];
+  collisionEvents: RenderCollisionEvent[];
   sensors: RenderSensors;
   telemetry: RenderTelemetry;
   settings: PlaygroundSettings;
