@@ -48,10 +48,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     motor: clamp(motor, -1, 1),
     steering: clamp(steering, -1, 1),
     targetLane: input.targetLane,
-    debug: {
-      lanePid: lanePid.getDebug(),
-      speedPid: speedPid.getDebug(),
-    },
   };
 }`,
   },
@@ -105,10 +101,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     motor: clamp(motor, -1, 1),
     steering: clamp(steering, -1, 1),
     targetLane: input.targetLane,
-    debug: {
-      lanePid: lanePid.getDebug(),
-      speedPid: speedPid.getDebug(),
-    },
   };
 }`,
   },
@@ -147,10 +139,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     motor: clamp(motor, -1, 1),
     steering: clamp(steering, -1, 1),
     targetLane: input.targetLane,
-    debug: {
-      lanePid: lanePid.getDebug(),
-      speedPid: speedPid.getDebug(),
-    },
   };
 }`,
   },
@@ -181,9 +169,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     motor: 0,
     steering: clamp(steering, -1, 1),
     targetLane: input.targetLane,
-    debug: {
-      lanePid: lanePid.getDebug(),
-    },
   };
 }`,
   },
@@ -215,9 +200,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     // This steering value is intentionally ignored when "Steer for me" is on.
     steering: 0,
     targetLane: input.targetLane,
-    debug: {
-      speedPid: speedPid.getDebug(),
-    },
   };
 }`,
   },

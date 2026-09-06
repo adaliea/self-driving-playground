@@ -343,8 +343,7 @@ interface PidController {
   /**
    * Returns the latest PID terms for telemetry.
    *
-   * Attach this to output.debug.lanePid or output.debug.speedPid to inspect
-   * proportional, integral, derivative, and final output values.
+   * The playground displays these terms automatically using the controller variable name.
    */
   getDebug(): PidDebugTerms;
 
