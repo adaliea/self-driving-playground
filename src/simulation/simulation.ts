@@ -455,14 +455,16 @@ export class Simulation {
       for (let aheadIndex = behindIndex + 1; aheadIndex < sortedVehicles.length; aheadIndex += 1) {
         const ahead = sortedVehicles[aheadIndex];
         const gap = ahead.s - behind.s;
-        const maxRelevantGap = (behind.length + ahead.length) / 2 + 3.5;
-        if (gap > maxRelevantGap) break;
+        // Half diagonals enclose rotated bodies; the extra distance allows for road curvature.
+        // This bound depends on both vehicles, so a short car cannot terminate the search
+        // before a longer vehicle farther ahead is considered.
+        const maxRelevantGap =
+          (Math.hypot(behind.length, behind.width) + Math.hypot(ahead.length, ahead.width)) / 2 + 3.5;
+        if (gap > maxRelevantGap) continue;
 
         const lateralGap = Math.abs(ahead.lateral - behind.lateral);
         const bodyHalfWidth = (behind.width + ahead.width) / 2;
         const bodyHalfLength = (behind.length + ahead.length) / 2;
-        const sameTravelPath = lateralGap < bodyHalfWidth + 0.35;
-        if (!sameTravelPath) continue;
 
         const pairKey = collisionPairKey(behind, ahead);
         const contact = this.vehicleContact(behind, ahead);
@@ -486,9 +488,7 @@ export class Simulation {
           continue;
         }
 
-        const withinContactReleaseMargin =
-          gap < bodyHalfLength + 0.3 && lateralGap < bodyHalfWidth + 0.3;
-        if (this.activeCollisionPairs.has(pairKey) && withinContactReleaseMargin) {
+        if (this.activeCollisionPairs.has(pairKey) && this.vehicleContact(behind, ahead, 0.3)) {
           collisionPairsThisStep.add(pairKey);
           this.collisionVisualUntil.set(behind.id, this.time + COLLISION_CONTACT_VISUAL_HOLD);
           this.collisionVisualUntil.set(ahead.id, this.time + COLLISION_CONTACT_VISUAL_HOLD);
@@ -545,9 +545,14 @@ export class Simulation {
     this.collisionPairLastStarted.set(pairKey, this.time);
   }
 
-  private vehicleContact(a: VehicleState, b: VehicleState): CollisionContact | undefined {
+  private vehicleContact(a: VehicleState, b: VehicleState, margin = 0): CollisionContact | undefined {
     const rectA = this.vehicleCollisionRect(a);
     const rectB = this.vehicleCollisionRect(b);
+    const radius = Math.hypot(rectA.halfLength, rectA.halfWidth) +
+      Math.hypot(rectB.halfLength, rectB.halfWidth) + margin * 2;
+    if ((rectA.center.x - rectB.center.x) ** 2 + (rectA.center.y - rectB.center.y) ** 2 > radius ** 2) {
+      return undefined;
+    }
     const axes = [rectA.forward, rectA.right, rectB.forward, rectB.right];
     let minimumPenetration = Number.POSITIVE_INFINITY;
     let minimumAxis = axes[0];
@@ -555,9 +560,12 @@ export class Simulation {
     for (const axis of axes) {
       const projectionA = projectCollisionRect(rectA, axis);
       const projectionB = projectCollisionRect(rectB, axis);
-      const penetration =
-        Math.min(projectionA.max, projectionB.max) - Math.max(projectionA.min, projectionB.min);
-      if (penetration <= 0) return undefined;
+      // Distance to the nearest separating edge also handles containment correctly.
+      const penetration = Math.min(
+        projectionA.max - projectionB.min,
+        projectionB.max - projectionA.min,
+      );
+      if (penetration <= -margin) return undefined;
       if (penetration < minimumPenetration) {
         minimumPenetration = penetration;
         minimumAxis = axis;
