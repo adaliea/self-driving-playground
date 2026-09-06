@@ -1,6 +1,8 @@
 export { CanvasRenderer } from './CanvasRenderer';
 export type {
+  CollisionKind,
   RenderCamera,
+  RenderCollisionEvent,
   RenderPoint,
   RenderRoadLine,
   RenderRoadSurface,

@@ -367,7 +367,7 @@ function App() {
             onSettingsChange={updateSettings}
           />
           <SimulatorCanvas ref={canvasRef} />
-          <TelemetryPanel telemetry={telemetry} compileErrors={compileErrors} runtimeError={runtimeError} />
+          <TelemetryPanel inspectionStore={inspectionStoreRef.current} telemetry={telemetry} compileErrors={compileErrors} runtimeError={runtimeError} />
         </div>
       </main>
 
