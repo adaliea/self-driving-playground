@@ -1,13 +1,22 @@
+import { useSyncExternalStore } from 'react';
+import type { RuntimeInspectionStore } from '../sandbox';
+import { pidTelemetryFromInspection } from './pidTelemetry';
 import { AlertTriangle, Gauge, GitPullRequestArrow, Info, ShieldCheck } from 'lucide-react';
 import type { RenderTelemetry } from '../rendering';
 
 interface TelemetryPanelProps {
   telemetry?: RenderTelemetry;
+  inspectionStore: RuntimeInspectionStore;
   compileErrors: string[];
   runtimeError?: string;
 }
 
-export function TelemetryPanel({ telemetry, compileErrors, runtimeError }: TelemetryPanelProps) {
+export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runtimeError }: TelemetryPanelProps) {
+  const inspection = useSyncExternalStore(
+    (listener) => inspectionStore.subscribe(listener),
+    () => inspectionStore.getState(),
+  );
+  const controllers = pidTelemetryFromInspection(inspection);
   const speed = telemetry?.speedMph ?? 0;
   const lanePid = telemetry?.debug?.lanePid;
   const speedPid = telemetry?.debug?.speedPid;
@@ -38,8 +47,11 @@ export function TelemetryPanel({ telemetry, compileErrors, runtimeError }: Telem
       </div>
 
       <div className="grid gap-3 xl:grid-cols-2">
-        <PidBlock title="Lane PID" terms={lanePid} />
-        <PidBlock title="Speed PID" terms={speedPid} />
+        {controllers.map((controller) => (
+          <PidBlock key={controller.id} title={controller.name} terms={controller.terms} />
+        ))}
+        {controllers.length === 0 ? <PidBlock title="Lane PID" terms={lanePid} /> : null}
+        {controllers.length === 0 ? <PidBlock title="Speed PID" terms={speedPid} /> : null}
       </div>
 
       <div className="mt-4 space-y-2">

@@ -36,7 +36,7 @@ export interface AutopilotOutput {
 
   /**
    * Optional structured debug data. The simulator never trusts this for physics,
-   * but the UI can display PID terms when examples or snippets choose to provide them.
+   * but the UI can display PID terms from custom controllers. Toolbox PIDs are inspected automatically.
    */
   debug?: AutopilotDebug;
 }
@@ -260,7 +260,7 @@ export interface LaneAnalysis {
 }
 
 /**
- * Optional PID telemetry that examples and toolbox snippets can attach to output.debug.
+ * PID terms displayed automatically for toolbox controllers, or supplied by custom controllers.
  */
 export interface PidDebugTerms {
   error: number;

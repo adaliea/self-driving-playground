@@ -191,7 +191,7 @@ const autopilotHoverDocs: Record<string, string> = {
     '',
     'Optional debug payload returned as `output.debug`.',
     '',
-    'Set `lanePid` or `speedPid` to show PID term visualizations in telemetry.',
+    'PID terms appear automatically using controller variable names. These fields remain available for custom controllers.',
   ].join('\n'),
 };
 
