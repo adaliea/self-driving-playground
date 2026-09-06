@@ -107,7 +107,7 @@ The app includes:
 - Speed control with `Steer for me`
 - Intentionally bad oscillating controller
 
-The default example is a working PID lane-keeping controller with comments explaining the P, I, and D terms. Examples can attach `debug.lanePid` or `debug.speedPid` so the telemetry panel shows PID terms.
+The default example is a working PID lane-keeping controller with comments explaining the P, I, and D terms. PID terms appear automatically in telemetry, labeled with the controller variable name (for example, `lanePid` or `speedPid`). No debug configuration or return fields are needed.
 
 ## Toolbox
 
