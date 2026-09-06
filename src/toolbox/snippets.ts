@@ -56,7 +56,7 @@ const gapMeters = leadVehicle?.relativeY ?? Number.POSITIVE_INFINITY;`,
     id: 'pid-controller',
     title: 'PID Controller Object',
     category: 'Control',
-    description: 'A stateful PID controller with integral limiting, output limiting, reset, and optional debug terms.',
+    description: 'A stateful PID controller with integral limiting, output limiting, reset, and automatic PID telemetry.',
     implementation: pidControllerImplementation,
     usage: `const lanePid = createPidController({
   kp: 0.36,

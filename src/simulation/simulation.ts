@@ -1,5 +1,5 @@
 import type { AutopilotInput, PlaygroundSettings, SanitizedAutopilotOutput } from '../types';
-import type { RenderPoint, RenderSnapshot } from '../rendering/types';
+import type { CollisionKind, RenderCollisionEvent, RenderPoint, RenderSnapshot } from '../rendering/types';
 import {
   builtInAssistLaneKeeping,
   builtInAssistSpeedControl,
@@ -22,9 +22,12 @@ const TRAFFIC_MAX_COUNT = 132;
 const TRAFFIC_BACK_BUFFER = 250;
 const TRAFFIC_FRONT_BUFFER = 820;
 const TRAFFIC_MIN_SPAWN_GAP = 10;
-const COLLISION_LENGTH_INSET = 0.18;
-const COLLISION_WIDTH_INSET = 0.12;
-const COLLISION_VISUAL_OVERLAP = 0.08;
+const COLLISION_POSITION_SLOP = 0.015;
+const COLLISION_MAX_CORRECTION = 0.55;
+const COLLISION_FEEDBACK_DURATION = 0.95;
+const COLLISION_EVENT_COOLDOWN = 0.7;
+const COLLISION_REPEAT_IMPACT_SPEED = 0.04;
+const COLLISION_CONTACT_VISUAL_HOLD = 0.18;
 
 export interface SimulationVehicleDebug {
   id: string;
@@ -64,6 +67,15 @@ interface CollisionRect {
   halfWidth: number;
 }
 
+interface CollisionContact {
+  normal: CollisionAxis;
+  penetration: number;
+}
+
+interface CollisionEventState extends Omit<RenderCollisionEvent, 'age'> {
+  startedAt: number;
+}
+
 export class Simulation {
   private road: Road;
   private rng: SeededRandom;
@@ -71,7 +83,11 @@ export class Simulation {
   private vehicles: VehicleState[] = [];
   private time = 0;
   private collisions = 0;
-  private egoCollisionActive = false;
+  private collisionSequence = 0;
+  private collisionEvents: CollisionEventState[] = [];
+  private activeCollisionPairs = new Set<string>();
+  private collisionPairLastStarted = new Map<string, number>();
+  private collisionVisualUntil = new Map<string, number>();
   private lastEgoInput: AutopilotInput;
   private lastApplied: AppliedControls = {
     userMotor: 0,
@@ -105,7 +121,11 @@ export class Simulation {
     this.sensors.reset();
     this.time = 0;
     this.collisions = 0;
-    this.egoCollisionActive = false;
+    this.collisionSequence = 0;
+    this.collisionEvents = [];
+    this.activeCollisionPairs.clear();
+    this.collisionPairLastStarted.clear();
+    this.collisionVisualUntil.clear();
 
     const egoLane = 1;
     this.vehicles = [
@@ -253,10 +273,14 @@ export class Simulation {
           actualSteering: vehicle.actualSteering,
           commandMotor: vehicle.commandMotor,
           commandSteering: vehicle.commandSteering,
-          collision: vehicle.collision,
+          collision: vehicle.collision || (this.collisionVisualUntil.get(vehicle.id) ?? 0) > this.time,
           personality: vehicle.personality?.label,
         };
       }),
+      collisionEvents: this.collisionEvents.map(({ startedAt, ...event }) => ({
+        ...event,
+        age: Math.max(0, this.time - startedAt),
+      })),
       sensors: {
         measurements: this.lastEgoInput.vehicleMeasurements,
         tracks: this.lastEgoInput.vehicles,
@@ -380,6 +404,7 @@ export class Simulation {
         vehicle.actualMotor = 0;
         vehicle.actualSteering = 0;
         vehicle.collision = false;
+        this.collisionVisualUntil.delete(vehicle.id);
       }
     }
   }
@@ -410,8 +435,19 @@ export class Simulation {
   }
 
   private resolveCloseVehicles(): void {
+    this.collisionEvents = this.collisionEvents.filter(
+      (event) => this.time - event.startedAt < event.duration,
+    );
+    for (const [pairKey, lastStartedAt] of this.collisionPairLastStarted) {
+      if (this.time - lastStartedAt > COLLISION_FEEDBACK_DURATION * 2) {
+        this.collisionPairLastStarted.delete(pairKey);
+      }
+    }
+    for (const [vehicleId, visualUntil] of this.collisionVisualUntil) {
+      if (visualUntil <= this.time) this.collisionVisualUntil.delete(vehicleId);
+    }
     for (const vehicle of this.vehicles) vehicle.collision = false;
-    let egoCollisionThisStep = false;
+    const collisionPairsThisStep = new Set<string>();
     const sortedVehicles = [...this.vehicles].sort((a, b) => a.s - b.s);
 
     for (let behindIndex = 0; behindIndex < sortedVehicles.length; behindIndex += 1) {
@@ -419,49 +455,244 @@ export class Simulation {
       for (let aheadIndex = behindIndex + 1; aheadIndex < sortedVehicles.length; aheadIndex += 1) {
         const ahead = sortedVehicles[aheadIndex];
         const gap = ahead.s - behind.s;
-        const maxRelevantGap = (behind.length + ahead.length) / 2 + 3.5;
-        if (gap > maxRelevantGap) break;
+        // Half diagonals enclose rotated bodies; the extra distance allows for road curvature.
+        // This bound depends on both vehicles, so a short car cannot terminate the search
+        // before a longer vehicle farther ahead is considered.
+        const maxRelevantGap =
+          (Math.hypot(behind.length, behind.width) + Math.hypot(ahead.length, ahead.width)) / 2 + 3.5;
+        if (gap > maxRelevantGap) continue;
 
         const lateralGap = Math.abs(ahead.lateral - behind.lateral);
         const bodyHalfWidth = (behind.width + ahead.width) / 2;
         const bodyHalfLength = (behind.length + ahead.length) / 2;
-        const sameTravelPath = lateralGap < bodyHalfWidth + 0.35;
-        if (!sameTravelPath) continue;
 
-        const bodiesOverlap = gap < bodyHalfLength && this.vehicleBodiesOverlap(behind, ahead);
-        if (bodiesOverlap) {
+        const pairKey = collisionPairKey(behind, ahead);
+        const contact = this.vehicleContact(behind, ahead);
+        if (contact) {
           behind.collision = true;
           ahead.collision = true;
-          if (behind.kind === 'ego' || ahead.kind === 'ego') egoCollisionThisStep = true;
-          behind.s = Math.min(behind.s, ahead.s - Math.max(0.1, bodyHalfLength - COLLISION_VISUAL_OVERLAP));
-          behind.speed = Math.min(behind.speed, ahead.speed * 0.96);
+          this.collisionVisualUntil.set(behind.id, this.time + COLLISION_CONTACT_VISUAL_HOLD);
+          this.collisionVisualUntil.set(ahead.id, this.time + COLLISION_CONTACT_VISUAL_HOLD);
+          collisionPairsThisStep.add(pairKey);
+          const lastStartedAt = this.collisionPairLastStarted.get(pairKey) ?? Number.NEGATIVE_INFINITY;
+          const closingSpeed = this.contactClosingSpeed(behind, ahead, contact);
+          const isNewContact = !this.activeCollisionPairs.has(pairKey);
+          const isRepeatedImpact = closingSpeed >= COLLISION_REPEAT_IMPACT_SPEED;
+          if (
+            (isNewContact || isRepeatedImpact) &&
+            this.time - lastStartedAt >= COLLISION_EVENT_COOLDOWN
+          ) {
+            this.startCollisionEvent(behind, ahead, pairKey, contact, closingSpeed);
+          }
+          this.resolveVehicleContact(behind, ahead, contact);
           continue;
         }
 
-        const softFollowingGap = bodyHalfLength + 1.05;
-        if (gap < softFollowingGap) {
-          behind.s = Math.min(behind.s, ahead.s - softFollowingGap);
-          behind.speed = Math.min(behind.speed, ahead.speed * 0.985);
+        if (this.activeCollisionPairs.has(pairKey) && this.vehicleContact(behind, ahead, 0.3)) {
+          collisionPairsThisStep.add(pairKey);
+          this.collisionVisualUntil.set(behind.id, this.time + COLLISION_CONTACT_VISUAL_HOLD);
+          this.collisionVisualUntil.set(ahead.id, this.time + COLLISION_CONTACT_VISUAL_HOLD);
+        }
+
+        const longitudinalClearance = gap - bodyHalfLength;
+        const substantiallySameLane = lateralGap < bodyHalfWidth * 0.72;
+        if (
+          behind.kind === 'traffic' &&
+          substantiallySameLane &&
+          longitudinalClearance >= 0 &&
+          longitudinalClearance < 1.05
+        ) {
+          const allowedClosingSpeed = longitudinalClearance * 1.8;
+          behind.speed = Math.min(behind.speed, ahead.speed + allowedClosingSpeed);
         }
       }
     }
 
-    if (egoCollisionThisStep && !this.egoCollisionActive) this.collisions += 1;
-    this.egoCollisionActive = egoCollisionThisStep;
+    this.activeCollisionPairs = collisionPairsThisStep;
   }
 
-  private vehicleBodiesOverlap(a: VehicleState, b: VehicleState): boolean {
+  private startCollisionEvent(
+    a: VehicleState,
+    b: VehicleState,
+    pairKey: string,
+    contact: CollisionContact,
+    closingSpeed: number,
+  ): void {
+    const pointA = this.road.worldPointAt(a.s, a.lateral);
+    const pointB = this.road.worldPointAt(b.s, b.lateral);
+    const forwardA = a.speed * Math.cos(a.headingOffset);
+    const lateralA = a.speed * Math.sin(a.headingOffset);
+    const forwardB = b.speed * Math.cos(b.headingOffset);
+    const lateralB = b.speed * Math.sin(b.headingOffset);
+    const relativeSpeed = Math.hypot(forwardA - forwardB, lateralA - lateralB);
+    const severity = clamp(Math.max(closingSpeed, relativeSpeed * 0.35) / 14, 0.2, 1);
+
+    this.collisionSequence += 1;
+    this.collisionEvents.push({
+      id: `collision-${this.collisionSequence}`,
+      vehicleIds: [a.id, b.id],
+      point: {
+        x: (pointA.x + pointB.x) / 2,
+        y: (pointA.y + pointB.y) / 2,
+      },
+      kind: this.classifyCollision(a, b, contact),
+      egoInvolved: a.kind === 'ego' || b.kind === 'ego',
+      severity,
+      startedAt: this.time,
+      duration: COLLISION_FEEDBACK_DURATION + severity * 0.2,
+    });
+    if (a.kind === 'ego' || b.kind === 'ego') this.collisions += 1;
+    this.collisionPairLastStarted.set(pairKey, this.time);
+  }
+
+  private vehicleContact(a: VehicleState, b: VehicleState, margin = 0): CollisionContact | undefined {
     const rectA = this.vehicleCollisionRect(a);
     const rectB = this.vehicleCollisionRect(b);
+    const radius = Math.hypot(rectA.halfLength, rectA.halfWidth) +
+      Math.hypot(rectB.halfLength, rectB.halfWidth) + margin * 2;
+    if ((rectA.center.x - rectB.center.x) ** 2 + (rectA.center.y - rectB.center.y) ** 2 > radius ** 2) {
+      return undefined;
+    }
     const axes = [rectA.forward, rectA.right, rectB.forward, rectB.right];
+    let minimumPenetration = Number.POSITIVE_INFINITY;
+    let minimumAxis = axes[0];
 
     for (const axis of axes) {
       const projectionA = projectCollisionRect(rectA, axis);
       const projectionB = projectCollisionRect(rectB, axis);
-      if (projectionA.max < projectionB.min || projectionB.max < projectionA.min) return false;
+      // Distance to the nearest separating edge also handles containment correctly.
+      const penetration = Math.min(
+        projectionA.max - projectionB.min,
+        projectionB.max - projectionA.min,
+      );
+      if (penetration <= -margin) return undefined;
+      if (penetration < minimumPenetration) {
+        minimumPenetration = penetration;
+        minimumAxis = axis;
+      }
     }
 
-    return true;
+    const centerDelta = {
+      x: rectB.center.x - rectA.center.x,
+      y: rectB.center.y - rectA.center.y,
+    };
+    const direction = dot(centerDelta, minimumAxis) < 0 ? -1 : 1;
+    return {
+      normal: {
+        x: minimumAxis.x * direction,
+        y: minimumAxis.y * direction,
+      },
+      penetration: minimumPenetration,
+    };
+  }
+
+  private resolveVehicleContact(a: VehicleState, b: VehicleState, contact: CollisionContact): void {
+    const inverseMassA = 1 / approximateVehicleMass(a);
+    const inverseMassB = 1 / approximateVehicleMass(b);
+    const inverseMassTotal = inverseMassA + inverseMassB;
+    const correction = clamp(
+      contact.penetration + COLLISION_POSITION_SLOP,
+      0,
+      COLLISION_MAX_CORRECTION,
+    );
+
+    if (correction > 0) {
+      const shareA = inverseMassA / inverseMassTotal;
+      const shareB = inverseMassB / inverseMassTotal;
+      this.moveVehicleInWorld(
+        a,
+        -contact.normal.x * correction * shareA,
+        -contact.normal.y * correction * shareA,
+      );
+      this.moveVehicleInWorld(
+        b,
+        contact.normal.x * correction * shareB,
+        contact.normal.y * correction * shareB,
+      );
+    }
+
+    const velocityA = this.vehicleWorldVelocity(a);
+    const velocityB = this.vehicleWorldVelocity(b);
+    const closingSpeed = this.contactClosingSpeedFromVelocities(velocityA, velocityB, contact);
+    if (closingSpeed <= 0) return;
+
+    const impulse = closingSpeed / inverseMassTotal;
+    this.setVehicleWorldVelocity(a, {
+      x: velocityA.x - contact.normal.x * impulse * inverseMassA,
+      y: velocityA.y - contact.normal.y * impulse * inverseMassA,
+    });
+    this.setVehicleWorldVelocity(b, {
+      x: velocityB.x + contact.normal.x * impulse * inverseMassB,
+      y: velocityB.y + contact.normal.y * impulse * inverseMassB,
+    });
+  }
+
+  private contactClosingSpeed(a: VehicleState, b: VehicleState, contact: CollisionContact): number {
+    return this.contactClosingSpeedFromVelocities(
+      this.vehicleWorldVelocity(a),
+      this.vehicleWorldVelocity(b),
+      contact,
+    );
+  }
+
+  private contactClosingSpeedFromVelocities(
+    velocityA: CollisionAxis,
+    velocityB: CollisionAxis,
+    contact: CollisionContact,
+  ): number {
+    return Math.max(
+      0,
+      dot(
+        { x: velocityA.x - velocityB.x, y: velocityA.y - velocityB.y },
+        contact.normal,
+      ),
+    );
+  }
+
+  private moveVehicleInWorld(vehicle: VehicleState, dx: number, dy: number): void {
+    const roadSample = this.road.sampleAt(vehicle.s);
+    const forward = { x: Math.sin(roadSample.heading), y: Math.cos(roadSample.heading) };
+    const right = { x: Math.cos(roadSample.heading), y: -Math.sin(roadSample.heading) };
+    vehicle.s = Math.max(0, vehicle.s + dx * forward.x + dy * forward.y);
+    const lateralDelta = dx * right.x + dy * right.y;
+    const roadLimit = Math.max(0.1, this.road.getRoadHalfWidth() - vehicle.width / 2 - 0.03);
+    vehicle.lateral = clamp(vehicle.lateral + lateralDelta, -roadLimit, roadLimit);
+    vehicle.laneIndex = this.road.getLaneIndex(vehicle.lateral);
+  }
+
+  private vehicleWorldVelocity(vehicle: VehicleState): CollisionAxis {
+    const roadHeading = this.road.sampleAt(vehicle.s).heading;
+    const heading = roadHeading + vehicle.headingOffset;
+    return {
+      x: Math.sin(heading) * vehicle.speed,
+      y: Math.cos(heading) * vehicle.speed,
+    };
+  }
+
+  private setVehicleWorldVelocity(vehicle: VehicleState, velocity: CollisionAxis): void {
+    const roadHeading = this.road.sampleAt(vehicle.s).heading;
+    const roadForward = { x: Math.sin(roadHeading), y: Math.cos(roadHeading) };
+    const roadRight = { x: Math.cos(roadHeading), y: -Math.sin(roadHeading) };
+    const forwardSpeed = Math.max(0, dot(velocity, roadForward));
+    const lateralSpeed = dot(velocity, roadRight);
+    vehicle.speed = Math.hypot(forwardSpeed, lateralSpeed);
+    vehicle.headingOffset = clamp(
+      Math.atan2(lateralSpeed, Math.max(0.01, forwardSpeed)),
+      -0.95,
+      0.95,
+    );
+  }
+
+  private classifyCollision(a: VehicleState, b: VehicleState, contact: CollisionContact): CollisionKind {
+    const roadHeading = this.road.sampleAt((a.s + b.s) / 2).heading;
+    const roadForward = { x: Math.sin(roadHeading), y: Math.cos(roadHeading) };
+    const roadRight = { x: Math.cos(roadHeading), y: -Math.sin(roadHeading) };
+    const forwardAlignment = Math.abs(dot(contact.normal, roadForward));
+    const lateralAlignment = Math.abs(dot(contact.normal, roadRight));
+
+    if (lateralAlignment > forwardAlignment * 1.35) return 'sideswipe';
+    if (forwardAlignment > lateralAlignment * 1.35) return 'rear-end';
+    return 'corner';
   }
 
   private vehicleCollisionRect(vehicle: VehicleState): CollisionRect {
@@ -471,8 +702,8 @@ export class Simulation {
       center: { x: pose.x, y: pose.y },
       forward: { x: Math.sin(heading), y: Math.cos(heading) },
       right: { x: Math.cos(heading), y: -Math.sin(heading) },
-      halfLength: Math.max(0.1, vehicle.length / 2 - COLLISION_LENGTH_INSET),
-      halfWidth: Math.max(0.1, vehicle.width / 2 - COLLISION_WIDTH_INSET),
+      halfLength: vehicle.length / 2,
+      halfWidth: vehicle.width / 2,
     };
   }
 
@@ -558,4 +789,16 @@ function projectCollisionRect(rect: CollisionRect, axis: CollisionAxis): { min: 
     min: center - radius,
     max: center + radius,
   };
+}
+
+function dot(a: CollisionAxis, b: CollisionAxis): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+function approximateVehicleMass(vehicle: VehicleState): number {
+  return Math.max(900, vehicle.length * vehicle.width * 180);
+}
+
+function collisionPairKey(a: VehicleState, b: VehicleState): string {
+  return a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
 }
