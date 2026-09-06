@@ -1,5 +1,5 @@
 import type { LaneLineSample, VehicleMeasurement, VehicleTrack } from '../types';
-import type { CollisionKind, RenderCollisionEvent, RenderPoint, RenderSnapshot, RenderVehicle } from './types';
+import type { CollisionKind, RenderPoint, RenderSnapshot, RenderVehicle } from './types';
 
 interface ScreenPoint {
   x: number;

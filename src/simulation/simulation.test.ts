@@ -7,6 +7,7 @@ interface SimulationInternals {
   vehicles: VehicleState[];
   time: number;
   resolveCloseVehicles(): void;
+  vehicleContact(a: VehicleState, b: VehicleState): { normal: { x: number; y: number }; penetration: number } | undefined;
 }
 
 describe('collision feedback events', () => {
@@ -97,6 +98,33 @@ describe('collision feedback events', () => {
 });
 
 describe('axis-aware collision response', () => {
+  it('detects a rotated corner beyond the unrotated width envelope', () => {
+    const simulation = new Simulation(DEFAULT_SETTINGS);
+    const internals = simulation as unknown as SimulationInternals;
+    const ego = collisionVehicle('ego', 'ego', 120, 0);
+    ego.headingOffset = 0.7;
+    const traffic = collisionVehicle('corner', 'traffic', 121.2, 2.8);
+    internals.vehicles = [ego, traffic];
+    expect(internals.vehicleContact(ego, traffic)).toBeDefined();
+
+    internals.resolveCloseVehicles();
+
+    expect(simulation.getDebugState().collisions).toBe(1);
+    expect(ego.collision).toBe(true);
+  });
+
+  it('computes enough separation when one projected box contains the other', () => {
+    const simulation = new Simulation(DEFAULT_SETTINGS);
+    const internals = simulation as unknown as SimulationInternals;
+    const ego = collisionVehicle('ego', 'ego', 120, 0);
+    const traffic = collisionVehicle('wide-truck', 'traffic', 120, 0);
+    traffic.width = 2.55;
+    traffic.length = 8.8;
+
+    const contact = internals.vehicleContact(ego, traffic);
+    expect(contact?.penetration).toBeCloseTo((ego.width + traffic.width) / 2, 6);
+  });
+
   it('separates a sideswipe laterally without throwing ego backward', () => {
     const simulation = new Simulation(DEFAULT_SETTINGS);
     const internals = simulation as unknown as SimulationInternals;
