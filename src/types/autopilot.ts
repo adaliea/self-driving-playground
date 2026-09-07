@@ -244,12 +244,12 @@ export interface LaneAnalysis {
   centerOffset: number;
 
   /**
-   * Estimated lane heading error ahead of the vehicle, in radians.
+   * Estimated lane heading error in radians, at ego for local regression or ahead for preview.
    */
   heading: number;
 
   /**
-   * Estimated signed lane curvature ahead of the vehicle.
+   * Estimated signed lane curvature, at ego for local regression or ahead for preview.
    */
   curvature: number;
 

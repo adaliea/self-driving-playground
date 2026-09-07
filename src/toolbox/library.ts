@@ -541,14 +541,16 @@ function accelerationFeedforward(
 }`;
 
 export const curveRegressionImplementation = `/**
- * Runs weighted lane regression for the current target lane.
+ * Fits the nearest 3–21 meters of the target lane for steering by default.
+ * Use preview mode for the longer forward fit when planning speed.
  *
  * @param input Current sensor snapshot.
+ * @param mode Local steering geometry (default), or a longer speed-planning preview.
  * @returns Lane geometry for input.targetLane relative to the ego lane.
  */
-function analyzeTargetLane(input: AutopilotInput): LaneAnalysis {
+function analyzeTargetLane(input: AutopilotInput, mode: 'local' | 'preview' = 'local'): LaneAnalysis {
   const relativeTargetLane = input.targetLane - input.ego.laneIndex;
-  return analyzeLaneRegression(input.laneLines, relativeTargetLane);
+  return analyzeLaneRegression(input.laneLines, relativeTargetLane, mode);
 }
 
 /**
