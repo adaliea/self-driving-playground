@@ -206,12 +206,12 @@ interface LaneAnalysis {
   centerOffset: number;
 
   /**
-   * Estimated lane heading error ahead of the vehicle, in radians.
+   * Estimated lane heading error in radians, at ego for local regression or ahead for preview.
    */
   heading: number;
 
   /**
-   * Estimated signed lane curvature ahead of the vehicle.
+   * Estimated signed lane curvature, at ego for local regression or ahead for preview.
    */
   curvature: number;
 
@@ -271,8 +271,10 @@ interface AutopilotDebug {
 /**
  * Built-in lane interpretation helper available to user code.
  *
- * It fits a weighted quadratic regression through forward lane-center samples
- * and returns center offset, heading, curvature, and confidence. Pass
+ * By default, it fits a weighted quadratic through the nearest 3–21 meters
+ * and estimates center offset, heading, and curvature at ego for steering.
+ * Pass 'preview' as the third argument for the original longer forward fit
+ * (5–56 meters), useful for speed planning. Pass
  * input.targetLane - input.ego.laneIndex as relativeTargetLane to analyze an
  * adjacent target lane during lane-change experiments.
  */
@@ -283,7 +285,9 @@ declare function analyzeLaneRegression(
    * Target lane relative to ego.laneIndex.
    * Use -1 for left adjacent lane, 0 for current lane, and 1 for right adjacent lane.
    */
-  relativeTargetLane?: number
+  relativeTargetLane?: number,
+  /** Local steering geometry (default), or a longer speed-planning preview. */
+  mode?: 'local' | 'preview'
 ): LaneAnalysis;
 
 /**

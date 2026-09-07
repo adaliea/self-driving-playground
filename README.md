@@ -121,3 +121,20 @@ The toolbox panel provides inspectable TypeScript helpers from a virtual `autopi
 - adaptive cruise target-speed snippet
 
 Each helper can insert a short usage example at the bottom of the editor. The implementations stay out of `Autopilot.ts`, but Monaco can still navigate to them with Go to Definition / Ctrl-click, opening the read-only toolbox file at the definition.
+
+### Local lane regression and preview
+
+`analyzeLaneRegression(input.laneLines)` and `analyzeTargetLane(input)` default to
+fitting the nearest 3–21 meters of lane samples and estimating geometry at ego.
+Use this local geometry for steering so distant corner entries and exits do not
+advance the steering response. Existing calls receive this behavior automatically.
+
+For the original longer 5–56 meter fit, select `"preview"` when planning speed:
+
+```ts
+const lane = analyzeTargetLane(input); // Local steering geometry.
+const preview = analyzeTargetLane(input, "preview"); // Upcoming road geometry.
+// The built-in helper also accepts the mode directly:
+const relativeLane = input.targetLane - input.ego.laneIndex;
+const previewLane = analyzeLaneRegression(input.laneLines, relativeLane, "preview");
+```

@@ -152,7 +152,7 @@ export function builtInSpeedControl(input: AutopilotInput, desiredSpeed = 29): n
 export function builtInAssistSpeedControl(input: AutopilotInput, desiredSpeed = 31): number {
   const closest = closestVehicleAhead(input.vehicles, input.targetLane);
   const relativeTargetLane = input.targetLane - input.ego.laneIndex;
-  const lane = analyzeLaneDetectionsForTarget(input.laneLines, relativeTargetLane);
+  const lane = analyzeLaneDetectionsForTarget(input.laneLines, relativeTargetLane, 'preview');
   const previewCurvature = previewLaneCurvatureForTarget(input.laneLines, relativeTargetLane);
   let targetSpeed = desiredSpeed;
   let gapBrake = 0;
@@ -222,14 +222,18 @@ export function trafficAutopilot(vehicle: VehicleState, input: AutopilotInput, l
   };
 }
 
-export function analyzeLaneDetections(laneLines: LaneLineDetections): LaneAnalysis {
-  return analyzeLaneBoundaries(laneLines.left, laneLines.right);
+export function analyzeLaneDetections(laneLines: LaneLineDetections, mode: 'local' | 'preview' = 'local'): LaneAnalysis {
+  return analyzeLaneBoundaries(laneLines.left, laneLines.right, mode !== 'preview');
 }
 
-export function analyzeLaneDetectionsForTarget(laneLines: LaneLineDetections, relativeTargetLane: number): LaneAnalysis {
-  if (relativeTargetLane < 0) return analyzeLaneBoundaries(laneLines.farLeft, laneLines.left);
-  if (relativeTargetLane > 0) return analyzeLaneBoundaries(laneLines.right, laneLines.farRight);
-  return analyzeLaneDetections(laneLines);
+export function analyzeLaneDetectionsForTarget(
+  laneLines: LaneLineDetections,
+  relativeTargetLane: number,
+  mode: 'local' | 'preview' = 'local',
+): LaneAnalysis {
+  if (relativeTargetLane < 0) return analyzeLaneBoundaries(laneLines.farLeft, laneLines.left, mode !== 'preview');
+  if (relativeTargetLane > 0) return analyzeLaneBoundaries(laneLines.right, laneLines.farRight, mode !== 'preview');
+  return analyzeLaneDetections(laneLines, mode);
 }
 
 function previewLaneCurvatureForTarget(laneLines: LaneLineDetections, relativeTargetLane: number): number {
@@ -238,7 +242,7 @@ function previewLaneCurvatureForTarget(laneLines: LaneLineDetections, relativeTa
   return previewLaneCurvature(laneLines.left, laneLines.right);
 }
 
-function analyzeLaneBoundaries(leftSamples: LaneLineSample[], rightSamples: LaneLineSample[]): LaneAnalysis {
+function analyzeLaneBoundaries(leftSamples: LaneLineSample[], rightSamples: LaneLineSample[], local = false): LaneAnalysis {
   const left = representativeLinePoint(leftSamples);
   const right = representativeLinePoint(rightSamples);
   const fallbackConfidence = averageConfidence([...leftSamples, ...rightSamples]);
@@ -255,11 +259,14 @@ function analyzeLaneBoundaries(leftSamples: LaneLineSample[], rightSamples: Lane
   const centerNear = lineCenterAtY(leftSamples, rightSamples, 5);
   const centerMid = lineCenterAtY(leftSamples, rightSamples, 30);
   const centerFar = lineCenterAtY(leftSamples, rightSamples, 62);
-  const fit = fitForwardLaneCenterline(leftSamples, rightSamples);
-  const centerOffset = centerNear.x;
+  // Steering needs geometry near ego. A long quadratic averages upcoming curve
+  // transitions into the current curvature, advancing both turn-in and unwind.
+  // Keep the longer fit for the public preview helper and speed planning.
+  const fit = fitForwardLaneCenterline(leftSamples, rightSamples, local);
+  const centerOffset = local && fit ? fit.c0 : centerNear.x;
   const fallbackHeading = Math.atan2(centerFar.x - centerNear.x, Math.max(1, centerFar.y - centerNear.y));
-  const headingLookahead = 18;
-  const curvatureLookahead = 12;
+  const headingLookahead = local ? 0 : 18;
+  const curvatureLookahead = local ? 0 : 12;
   const headingSlope = fit ? fit.c1 + 2 * fit.c2 * headingLookahead : Math.tan(fallbackHeading);
   const curvatureSlope = fit ? fit.c1 + 2 * fit.c2 * curvatureLookahead : headingSlope;
   const heading = Math.atan(headingSlope);
@@ -395,10 +402,11 @@ function previewLaneCurvature(leftSamples: LaneLineSample[], rightSamples: LaneL
 function fitForwardLaneCenterline(
   leftSamples: LaneLineSample[],
   rightSamples: LaneLineSample[],
+  local = false,
 ): LaneCenterFit | undefined {
   const samples: LaneLineSample[] = [];
 
-  for (let y = 5; y <= 56; y += y < 25 ? 4 : 6) {
+  for (let y = local ? 3 : 5; y <= (local ? 21 : 56); y += local ? 2.4 : y < 25 ? 4 : 6) {
     const center = lineCenterAtY(leftSamples, rightSamples, y);
     if (center.confidence > 0.08) samples.push(center);
   }

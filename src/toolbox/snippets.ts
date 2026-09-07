@@ -93,7 +93,7 @@ const motor = accelerationFeedforward(targetSpeed, input.ego.speed);`,
     title: 'Curve Regression Helper',
     category: 'Perception',
     description:
-      'Uses the built-in weighted lane regression helper to estimate center offset, heading, and curvature on sharper turns.',
+      'Estimates local lane geometry for steering; supports a longer preview for speed planning.',
     implementation: curveRegressionImplementation,
     usage: `const lane = analyzeTargetLane(input);
 const laneError = lane.centerOffset + lane.heading * 2.0;
