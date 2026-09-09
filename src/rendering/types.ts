@@ -57,7 +57,17 @@ export interface RenderCamera {
   heading: number;
 }
 
+export interface LeadVehicleTelemetry {
+  id: string;
+  speedMph: number;
+  relativeX: number;
+  relativeY: number;
+  relativeVx: number;
+  relativeVy: number;
+}
+
 export interface RenderTelemetry {
+  leadVehicle?: LeadVehicleTelemetry;
   time: number;
   speed: number;
   speedMph: number;

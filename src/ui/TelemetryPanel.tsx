@@ -1,8 +1,13 @@
-import { useSyncExternalStore } from 'react';
+import { PidGraph } from './PidGraph';
+import { useEffect, useId, useState, useSyncExternalStore } from 'react';
+import { TelemetryExplorer } from './TelemetryExplorer';
+import { recordTelemetry, type TelemetryHistory } from './telemetryHistory';
+import type { PidSample } from './pidHistory';
 import type { RuntimeInspectionStore } from '../sandbox';
 import { pidTelemetryFromInspection } from './pidTelemetry';
-import { AlertTriangle, Gauge, GitPullRequestArrow, Info, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ChevronDown, GitPullRequestArrow, Info, ShieldCheck } from 'lucide-react';
 import type { RenderTelemetry } from '../rendering';
+import type { PidDebugTerms } from '../types';
 
 interface TelemetryPanelProps {
   telemetry?: RenderTelemetry;
@@ -16,16 +21,22 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
     (listener) => inspectionStore.subscribe(listener),
     () => inspectionStore.getState(),
   );
-  const controllers = pidTelemetryFromInspection(inspection);
+  const automaticControllers = pidTelemetryFromInspection(inspection);
+  const controllers = automaticControllers.length ? automaticControllers : [
+    ...(telemetry?.debug?.lanePid ? [{ id: 'legacy-lane', name: 'Lane PID', terms: telemetry.debug.lanePid }] : []),
+    ...(telemetry?.debug?.speedPid ? [{ id: 'legacy-speed', name: 'Speed PID', terms: telemetry.debug.speedPid }] : []),
+  ];
+  const [history, setHistory] = useState<TelemetryHistory>({ vehicle: [], pids: {} });
+  useEffect(() => {
+    if (telemetry) setHistory((previous) => recordTelemetry(previous, inspection.version, telemetry, controllers));
+  }, [telemetry, inspection.version, controllers]);
   const speed = telemetry?.speedMph ?? 0;
-  const lanePid = telemetry?.debug?.lanePid;
-  const speedPid = telemetry?.debug?.speedPid;
 
   return (
     <aside className="relative z-10 max-h-[42vh] min-w-0 overflow-auto border-t border-border bg-background p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-foreground">Telemetry</h2>
-        <Gauge className="text-muted-foreground" size={22} />
+        <TelemetryExplorer history={history} controllers={controllers} running={inspection.running} />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 2xl:grid-cols-3">
@@ -48,10 +59,8 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
 
       <div className="grid gap-3 xl:grid-cols-2">
         {controllers.map((controller) => (
-          <PidBlock key={controller.id} title={controller.name} terms={controller.terms} />
+          <PidBlock key={`${inspection.version}:${controller.id}`} title={controller.name} terms={controller.terms} history={history.pids[controller.id] ?? []} />
         ))}
-        {controllers.length === 0 ? <PidBlock title="Lane PID" terms={lanePid} /> : null}
-        {controllers.length === 0 ? <PidBlock title="Speed PID" terms={speedPid} /> : null}
       </div>
 
       <div className="mt-4 space-y-2">
@@ -92,7 +101,7 @@ function WarningBadge({ label }: { label: string }) {
   );
 }
 
-function PidBlock({ title, terms }: { title: string; terms?: { error: number; proportional: number; integral: number; derivative: number; output: number } }) {
+function PidBlock({ title, terms, history }: { title: string; terms?: Partial<PidDebugTerms>; history: PidSample[] }) {
   if (!terms) return null;
 
   return (
@@ -108,6 +117,12 @@ function PidBlock({ title, terms }: { title: string; terms?: { error: number; pr
         <PidTerm label="D" value={terms.derivative} help={pidTermHelp.derivative} align="right" />
         <PidTerm label="Out" value={terms.output} help={pidTermHelp.output} align="right" />
       </div>
+      <details className="group mt-3 border-t border-border pt-2">
+        <summary className="flex cursor-pointer list-none items-center justify-between rounded py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-sky-400 [&::-webkit-details-marker]:hidden">
+          PID history <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+        </summary>
+        <PidGraph name={title} history={history} />
+      </details>
     </div>
   );
 }
@@ -153,11 +168,11 @@ function PidTerm({
   align,
 }: {
   label: string;
-  value: number;
+  value?: number;
   help: PidTermHelp;
   align: 'left' | 'center' | 'right';
 }) {
-  const popoverId = `pid-term-${label.toLowerCase()}`;
+  const popoverId = useId();
   const alignmentClass =
     align === 'left'
       ? 'left-0'
@@ -178,7 +193,7 @@ function PidTerm({
           <span className="sr-only">Explain {help.title}</span>
         </button>
       </div>
-      <div className="mt-1 text-foreground">{formatSigned(value)}</div>
+      <div className="mt-1 text-foreground">{value !== undefined && Number.isFinite(value) ? formatSigned(value) : '—'}</div>
       <div
         id={popoverId}
         role="tooltip"
