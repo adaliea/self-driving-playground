@@ -3,6 +3,7 @@ import type { CollisionKind, RenderCollisionEvent, RenderPoint, RenderSnapshot }
 import {
   builtInAssistLaneKeeping,
   builtInAssistSpeedControl,
+  closestVehicleAhead,
   builtInLaneCentering,
   sanitizeAutopilotOutput,
   trafficAutopilot,
@@ -287,6 +288,7 @@ export class Simulation {
         laneLines: this.lastEgoInput.laneLines,
       },
       telemetry: {
+        leadVehicle: this.getLeadVehicleTelemetry(),
         time: this.time,
         speed: this.ego.speed,
         speedMph: metersPerSecondToMph(this.ego.speed),
@@ -305,6 +307,20 @@ export class Simulation {
         debug: this.lastUserOutput.debug,
       },
       settings,
+    };
+  }
+
+  private getLeadVehicleTelemetry() {
+    const input = this.lastEgoInput;
+    const lead = closestVehicleAhead(input.vehicles, input.ego.laneIndex);
+    if (!lead) return undefined;
+    return {
+      id: lead.id,
+      speedMph: metersPerSecondToMph(input.ego.speed + lead.relativeVy),
+      relativeX: lead.relativeX,
+      relativeY: lead.relativeY,
+      relativeVx: lead.relativeVx,
+      relativeVy: lead.relativeVy,
     };
   }
 
