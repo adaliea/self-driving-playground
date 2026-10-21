@@ -237,13 +237,15 @@ export class Simulation {
       const user = sanitizeAutopilotOutput(rawOutputs.get(runtime.id), ego.targetLane, this.road.laneCount);
       ego.targetLane = user.targetLane;
 
-      const assistMotor = builtInAssistSpeedControl(input, Math.max(ego.desiredSpeed, 31));
-      const assistSteering = builtInAssistLaneKeeping(input);
       const stalled = runtime.stallUntil > this.time;
       const finalOutput: SanitizedAutopilotOutput = {
         ...user,
-        motor: stalled ? 0 : settings.accelerateAssist ? assistMotor : user.motor,
-        steering: settings.steerAssist ? assistSteering : user.steering,
+        motor: stalled
+          ? 0
+          : settings.accelerateAssist
+            ? builtInAssistSpeedControl(input, Math.max(ego.desiredSpeed, 31))
+            : user.motor,
+        steering: settings.steerAssist ? builtInAssistLaneKeeping(input) : user.steering,
         targetLane: user.targetLane,
       };
 
