@@ -46,6 +46,8 @@ export interface RenderCollisionEvent {
   point: RenderPoint;
   kind: CollisionKind;
   egoInvolved: boolean;
+  /** Vehicle judged responsible for the contact; undefined when blame is shared. */
+  faultVehicleId?: string;
   severity: number;
   age: number;
   duration: number;

@@ -23,12 +23,61 @@ const TRAFFIC_MAX_COUNT = 132;
 const TRAFFIC_BACK_BUFFER = 250;
 const TRAFFIC_FRONT_BUFFER = 820;
 const TRAFFIC_MIN_SPAWN_GAP = 10;
+const TRAFFIC_MAX_SCALED_COUNT = 240;
 const COLLISION_POSITION_SLOP = 0.015;
 const COLLISION_MAX_CORRECTION = 0.55;
 const COLLISION_FEEDBACK_DURATION = 0.95;
 const COLLISION_EVENT_COOLDOWN = 0.7;
 const COLLISION_REPEAT_IMPACT_SPEED = 0.04;
 const COLLISION_CONTACT_VISUAL_HOLD = 0.18;
+const FAULT_LATERAL_SPEED_THRESHOLD = 0.35;
+const CUT_IN_LATERAL_SPEED_THRESHOLD = 0.8;
+const DEFAULT_PLAYER: SimulationPlayer = { id: EGO_ID, color: '#f7fffb' };
+const GRID_ROW_SPACING = 30;
+const GRID_FRONT_S = 120;
+
+export interface SimulationPlayer {
+  id: string;
+  color?: string;
+}
+
+export interface SimulationOptions {
+  /** Ego vehicles driven by autopilot code. Defaults to the single `ego` vehicle. */
+  players?: SimulationPlayer[];
+  /** Seconds of forced coasting after a player causes a collision. Disabled by default. */
+  atFaultStallSeconds?: number;
+}
+
+export interface SimulationViewOptions {
+  /** Road station used as the camera center. Defaults to the focused player. */
+  centerS?: number;
+  behindMeters?: number;
+  aheadMeters?: number;
+  /** Player whose sensors and telemetry are included. Defaults to the first player. */
+  focusId?: string;
+}
+
+export interface PlayerRaceState {
+  id: string;
+  distance: number;
+  s: number;
+  speed: number;
+  laneIndex: number;
+  collisions: number;
+  atFaultCollisions: number;
+  stalled: boolean;
+}
+
+interface PlayerRuntime {
+  id: string;
+  startS: number;
+  lastInput?: AutopilotInput;
+  lastApplied: AppliedControls;
+  lastUserOutput: SanitizedAutopilotOutput;
+  collisions: number;
+  atFaultCollisions: number;
+  stallUntil: number;
+}
 
 export interface SimulationVehicleDebug {
   id: string;
@@ -89,31 +138,17 @@ export class Simulation {
   private activeCollisionPairs = new Set<string>();
   private collisionPairLastStarted = new Map<string, number>();
   private collisionVisualUntil = new Map<string, number>();
-  private lastEgoInput: AutopilotInput;
-  private lastApplied: AppliedControls = {
-    userMotor: 0,
-    userSteering: 0,
-    finalMotor: 0,
-    finalSteering: 0,
-    actualMotor: 0,
-    actualSteering: 0,
-    targetLane: 1,
-    steerOverridden: false,
-    motorOverridden: false,
-    invalidFields: [],
-  };
-  private lastUserOutput: SanitizedAutopilotOutput = {
-    motor: 0,
-    steering: 0,
-    targetLane: 1,
-    invalidFields: [],
-  };
+  private readonly players: SimulationPlayer[];
+  private readonly atFaultStallSeconds: number;
+  private playerRuntimes = new Map<string, PlayerRuntime>();
 
-  constructor(settings: PlaygroundSettings) {
+  constructor(settings: PlaygroundSettings, options: SimulationOptions = {}) {
+    this.players = options.players?.length ? options.players : [DEFAULT_PLAYER];
+    this.atFaultStallSeconds = Math.max(0, options.atFaultStallSeconds ?? 0);
     this.road = new Road(settings.seed);
     this.rng = new SeededRandom(settings.seed);
     this.reset(settings);
-    this.lastEgoInput = this.createEgoInput(settings, 1 / 45);
+    for (const player of this.players) this.createPlayerInput(player.id, settings, 1 / 45);
   }
 
   reset(settings: PlaygroundSettings): void {
@@ -128,89 +163,105 @@ export class Simulation {
     this.collisionPairLastStarted.clear();
     this.collisionVisualUntil.clear();
 
-    const egoLane = 1;
-    this.vehicles = [
-      {
-        id: EGO_ID,
+    // Players start on a grid: one car per lane per row, rows spaced to give a safe headway.
+    const laneOrder = [1, 0, 2].filter((lane) => lane < this.road.laneCount);
+    const rows = Math.ceil(this.players.length / laneOrder.length);
+    this.vehicles = [];
+    this.playerRuntimes = new Map();
+    this.players.forEach((player, index) => {
+      const lane = laneOrder[index % laneOrder.length];
+      const s = GRID_FRONT_S + (rows - 1 - Math.floor(index / laneOrder.length)) * GRID_ROW_SPACING;
+      this.vehicles.push({
+        id: player.id,
         kind: 'ego',
-        s: 120,
-        lateral: this.road.getLaneCenterOffset(egoLane),
+        s,
+        lateral: this.road.getLaneCenterOffset(lane),
         headingOffset: 0,
         speed: settings.startingSpeed,
-        laneIndex: egoLane,
-        targetLane: egoLane,
+        laneIndex: lane,
+        targetLane: lane,
         desiredSpeed: 29,
         width: 2.05,
         length: 4.65,
-        color: '#f7fffb',
+        color: player.color ?? DEFAULT_PLAYER.color!,
         actualMotor: 0,
         actualSteering: 0,
         commandMotor: 0,
         commandSteering: 0,
         laneChangeCooldown: 0,
         collision: false,
-      },
-    ];
+      });
+      this.playerRuntimes.set(player.id, {
+        id: player.id,
+        startS: s,
+        lastApplied: idleAppliedControls(lane),
+        lastUserOutput: { motor: 0, steering: 0, targetLane: lane, invalidFields: [] },
+        collisions: 0,
+        atFaultCollisions: 0,
+        stallUntil: 0,
+      });
+    });
 
     this.seedTraffic(settings);
-    this.lastEgoInput = this.createEgoInput(settings, 1 / 45);
-    this.lastApplied = {
-      userMotor: 0,
-      userSteering: 0,
-      finalMotor: 0,
-      finalSteering: 0,
-      actualMotor: 0,
-      actualSteering: 0,
-      targetLane: egoLane,
-      steerOverridden: false,
-      motorOverridden: false,
-      invalidFields: [],
-    };
-    this.lastUserOutput = {
-      motor: 0,
-      steering: 0,
-      targetLane: egoLane,
-      invalidFields: [],
-    };
+    for (const player of this.players) this.createPlayerInput(player.id, settings, 1 / 45);
+  }
+
+  /** Player ids in grid order. */
+  get playerIds(): string[] {
+    return this.players.map((player) => player.id);
   }
 
   createEgoInput(settings: PlaygroundSettings, dt: number): AutopilotInput {
-    this.lastEgoInput = this.sensors.createInput(this.ego, this.vehicles, this.road, settings, this.rng, dt);
-    return this.lastEgoInput;
+    return this.createPlayerInput(this.primaryId, settings, dt);
+  }
+
+  createPlayerInput(id: string, settings: PlaygroundSettings, dt: number): AutopilotInput {
+    const runtime = this.playerRuntime(id);
+    runtime.lastInput = this.sensors.createInput(this.playerVehicle(id), this.vehicles, this.road, settings, this.rng, dt);
+    return runtime.lastInput;
   }
 
   step(dt: number, rawUserOutput: unknown, settings: PlaygroundSettings): void {
+    this.stepPlayers(dt, new Map([[this.primaryId, rawUserOutput]]), settings);
+  }
+
+  /** Advances every vehicle. Players without an entry in `rawOutputs` coast with zero output. */
+  stepPlayers(dt: number, rawOutputs: ReadonlyMap<string, unknown>, settings: PlaygroundSettings): void {
     this.time += dt;
-    this.road.extendTo(this.ego.s + 700);
+    this.road.extendTo(this.maxPlayerS() + 700);
     this.ensureTrafficCount(settings);
 
-    const ego = this.ego;
-    const user = sanitizeAutopilotOutput(rawUserOutput, ego.targetLane, this.road.laneCount);
-    ego.targetLane = user.targetLane;
+    for (const runtime of this.playerRuntimes.values()) {
+      const ego = this.playerVehicle(runtime.id);
+      const input = runtime.lastInput ?? this.createPlayerInput(runtime.id, settings, dt);
+      const user = sanitizeAutopilotOutput(rawOutputs.get(runtime.id), ego.targetLane, this.road.laneCount);
+      ego.targetLane = user.targetLane;
 
-    const assistMotor = builtInAssistSpeedControl(this.lastEgoInput, Math.max(ego.desiredSpeed, 31));
-    const assistSteering = builtInAssistLaneKeeping(this.lastEgoInput);
-    const finalOutput: SanitizedAutopilotOutput = {
-      ...user,
-      motor: settings.accelerateAssist ? assistMotor : user.motor,
-      steering: settings.steerAssist ? assistSteering : user.steering,
-      targetLane: user.targetLane,
-    };
+      const assistMotor = builtInAssistSpeedControl(input, Math.max(ego.desiredSpeed, 31));
+      const assistSteering = builtInAssistLaneKeeping(input);
+      const stalled = runtime.stallUntil > this.time;
+      const finalOutput: SanitizedAutopilotOutput = {
+        ...user,
+        motor: stalled ? 0 : settings.accelerateAssist ? assistMotor : user.motor,
+        steering: settings.steerAssist ? assistSteering : user.steering,
+        targetLane: user.targetLane,
+      };
 
-    applyVehiclePhysics(ego, this.road, finalOutput, dt, this.rng, settings.actuatorVariation);
-    this.lastUserOutput = user;
-    this.lastApplied = {
-      userMotor: user.motor,
-      userSteering: user.steering,
-      finalMotor: finalOutput.motor,
-      finalSteering: finalOutput.steering,
-      actualMotor: ego.actualMotor,
-      actualSteering: ego.actualSteering,
-      targetLane: ego.targetLane,
-      steerOverridden: settings.steerAssist,
-      motorOverridden: settings.accelerateAssist,
-      invalidFields: user.invalidFields,
-    };
+      applyVehiclePhysics(ego, this.road, finalOutput, dt, this.rng, settings.actuatorVariation);
+      runtime.lastUserOutput = user;
+      runtime.lastApplied = {
+        userMotor: user.motor,
+        userSteering: user.steering,
+        finalMotor: finalOutput.motor,
+        finalSteering: finalOutput.steering,
+        actualMotor: ego.actualMotor,
+        actualSteering: ego.actualSteering,
+        targetLane: ego.targetLane,
+        steerOverridden: settings.steerAssist,
+        motorOverridden: settings.accelerateAssist || stalled,
+        invalidFields: user.invalidFields,
+      };
+    }
 
     for (const vehicle of this.vehicles) {
       if (vehicle.kind !== 'traffic') continue;
@@ -230,17 +281,24 @@ export class Simulation {
     this.recycleTraffic(settings);
   }
 
-  getSnapshot(settings: PlaygroundSettings): RenderSnapshot {
-    const egoPose = this.road.worldPointAt(this.ego.s, this.ego.lateral);
-    const cameraHeading = egoPose.heading + this.ego.headingOffset;
-    const startS = Math.max(0, this.ego.s - 75);
-    const endS = this.ego.s + 190;
+  getSnapshot(settings: PlaygroundSettings, view: SimulationViewOptions = {}): RenderSnapshot {
+    const focus = this.playerVehicle(view.focusId ?? this.primaryId);
+    const runtime = this.playerRuntime(focus.id);
+    const lastInput = runtime.lastInput ?? this.createPlayerInput(focus.id, settings, 1 / 45);
+    const centerS = view.centerS ?? focus.s;
+    const cameraPose =
+      view.centerS === undefined
+        ? this.road.worldPointAt(focus.s, focus.lateral)
+        : this.road.worldPointAt(centerS, 0);
+    const cameraHeading = cameraPose.heading + (view.centerS === undefined ? focus.headingOffset : 0);
+    const startS = Math.max(0, centerS - (view.behindMeters ?? 75));
+    const endS = centerS + (view.aheadMeters ?? 190);
     this.road.extendTo(endS + 50);
 
     return {
       camera: {
-        x: egoPose.x,
-        y: egoPose.y,
+        x: cameraPose.x,
+        y: cameraPose.y,
         heading: cameraHeading,
       },
       road: {
@@ -283,35 +341,56 @@ export class Simulation {
         age: Math.max(0, this.time - startedAt),
       })),
       sensors: {
-        measurements: this.lastEgoInput.vehicleMeasurements,
-        tracks: this.lastEgoInput.vehicles,
-        laneLines: this.lastEgoInput.laneLines,
+        measurements: lastInput.vehicleMeasurements,
+        tracks: lastInput.vehicles,
+        laneLines: lastInput.laneLines,
       },
       telemetry: {
-        leadVehicle: this.getLeadVehicleTelemetry(),
+        leadVehicle: this.getLeadVehicleTelemetry(lastInput),
         time: this.time,
-        speed: this.ego.speed,
-        speedMph: metersPerSecondToMph(this.ego.speed),
-        laneIndex: this.ego.laneIndex,
-        targetLane: this.ego.targetLane,
-        userMotor: this.lastApplied.userMotor,
-        userSteering: this.lastApplied.userSteering,
-        finalMotor: this.lastApplied.finalMotor,
-        finalSteering: this.lastApplied.finalSteering,
-        actualMotor: this.ego.actualMotor,
-        actualSteering: this.ego.actualSteering,
-        steerOverridden: this.lastApplied.steerOverridden,
-        motorOverridden: this.lastApplied.motorOverridden,
-        invalidFields: this.lastApplied.invalidFields,
+        speed: focus.speed,
+        speedMph: metersPerSecondToMph(focus.speed),
+        laneIndex: focus.laneIndex,
+        targetLane: focus.targetLane,
+        userMotor: runtime.lastApplied.userMotor,
+        userSteering: runtime.lastApplied.userSteering,
+        finalMotor: runtime.lastApplied.finalMotor,
+        finalSteering: runtime.lastApplied.finalSteering,
+        actualMotor: focus.actualMotor,
+        actualSteering: focus.actualSteering,
+        steerOverridden: runtime.lastApplied.steerOverridden,
+        motorOverridden: runtime.lastApplied.motorOverridden,
+        invalidFields: runtime.lastApplied.invalidFields,
         collisions: this.collisions,
-        debug: this.lastUserOutput.debug,
+        debug: runtime.lastUserOutput.debug,
       },
       settings,
     };
   }
 
-  private getLeadVehicleTelemetry() {
-    const input = this.lastEgoInput;
+  /** Progress and collision counts for each player, in grid order. */
+  getPlayerStates(): PlayerRaceState[] {
+    return this.players.map(({ id }) => {
+      const vehicle = this.playerVehicle(id);
+      const runtime = this.playerRuntime(id);
+      return {
+        id,
+        distance: vehicle.s - runtime.startS,
+        s: vehicle.s,
+        speed: vehicle.speed,
+        laneIndex: vehicle.laneIndex,
+        collisions: runtime.collisions,
+        atFaultCollisions: runtime.atFaultCollisions,
+        stalled: runtime.stallUntil > this.time,
+      };
+    });
+  }
+
+  get currentTime(): number {
+    return this.time;
+  }
+
+  private getLeadVehicleTelemetry(input: AutopilotInput) {
     const lead = closestVehicleAhead(input.vehicles, input.ego.laneIndex);
     if (!lead) return undefined;
     return {
@@ -349,10 +428,46 @@ export class Simulation {
     };
   }
 
-  private get ego(): VehicleState {
-    const ego = this.vehicles.find((vehicle) => vehicle.id === EGO_ID);
-    if (!ego) throw new Error('Ego vehicle is missing from the simulation.');
-    return ego;
+  private get primaryId(): string {
+    return this.players[0].id;
+  }
+
+  private playerVehicle(id: string): VehicleState {
+    const vehicle = this.vehicles.find((candidate) => candidate.id === id && candidate.kind === 'ego');
+    if (!vehicle) throw new Error(`Player vehicle ${id} is missing from the simulation.`);
+    return vehicle;
+  }
+
+  private playerRuntime(id: string): PlayerRuntime {
+    const runtime = this.playerRuntimes.get(id);
+    if (!runtime) throw new Error(`Player ${id} is not part of the simulation.`);
+    return runtime;
+  }
+
+  private playerStations(): number[] {
+    return this.vehicles.filter((vehicle) => vehicle.kind === 'ego').map((vehicle) => vehicle.s);
+  }
+
+  private minPlayerS(): number {
+    return Math.min(...this.playerStations());
+  }
+
+  private maxPlayerS(): number {
+    return Math.max(...this.playerStations());
+  }
+
+  private distanceToNearestPlayer(station: number): number {
+    return Math.min(...this.playerStations().map((playerS) => Math.abs(station - playerS)));
+  }
+
+  private nearAnyPlayer(station: number, distance: number): boolean {
+    return this.playerStations().some((playerS) => Math.abs(station - playerS) < distance);
+  }
+
+  /** Traffic count scales with how far the players have spread so density stays comparable. */
+  private trafficWindowScale(): number {
+    const base = TRAFFIC_BACK_BUFFER + TRAFFIC_FRONT_BUFFER;
+    return (this.maxPlayerS() - this.minPlayerS() + base) / base;
   }
 
   private seedTraffic(settings: PlaygroundSettings): void {
@@ -361,9 +476,9 @@ export class Simulation {
     let index = 0;
 
     for (let lane = 0; lane < this.road.laneCount && index < count; lane += 1) {
-      let station = this.ego.s - TRAFFIC_BACK_BUFFER + this.rng.range(0, spacing);
-      while (station < this.ego.s + TRAFFIC_FRONT_BUFFER && index < count) {
-        if (Math.abs(station - this.ego.s) > 26) {
+      let station = this.minPlayerS() - TRAFFIC_BACK_BUFFER + this.rng.range(0, spacing);
+      while (station < this.maxPlayerS() + TRAFFIC_FRONT_BUFFER && index < count) {
+        if (!this.nearAnyPlayer(station, 26)) {
           this.vehicles.push(this.createTrafficVehicle(index, lane, station, settings));
           index += 1;
         }
@@ -397,7 +512,7 @@ export class Simulation {
     } else if (currentCount > targetCount) {
       const removable = this.vehicles
         .filter((vehicle) => vehicle.kind === 'traffic')
-        .sort((a, b) => Math.abs(b.s - this.ego.s) - Math.abs(a.s - this.ego.s))
+        .sort((a, b) => this.distanceToNearestPlayer(b.s) - this.distanceToNearestPlayer(a.s))
         .slice(0, currentCount - targetCount)
         .map((vehicle) => vehicle.id);
       this.vehicles = this.vehicles.filter((vehicle) => !removable.includes(vehicle.id));
@@ -407,9 +522,10 @@ export class Simulation {
   private recycleTraffic(settings: PlaygroundSettings): void {
     for (const vehicle of this.vehicles) {
       if (vehicle.kind !== 'traffic') continue;
-      if (vehicle.s < this.ego.s - TRAFFIC_BACK_BUFFER || vehicle.s > this.ego.s + TRAFFIC_FRONT_BUFFER) {
+      const minS = this.minPlayerS();
+      if (vehicle.s < minS - TRAFFIC_BACK_BUFFER || vehicle.s > this.maxPlayerS() + TRAFFIC_FRONT_BUFFER) {
         const lane = this.rng.int(0, this.road.laneCount - 1);
-        vehicle.s = this.findOpenSpawnStation(lane, settings, vehicle.s < this.ego.s);
+        vehicle.s = this.findOpenSpawnStation(lane, settings, vehicle.s < minS);
         vehicle.lateral = this.road.getLaneCenterOffset(lane);
         vehicle.laneIndex = lane;
         vehicle.targetLane = lane;
@@ -543,6 +659,7 @@ export class Simulation {
     const relativeSpeed = Math.hypot(forwardA - forwardB, lateralA - lateralB);
     const severity = clamp(Math.max(closingSpeed, relativeSpeed * 0.35) / 14, 0.2, 1);
 
+    const faultVehicleId = this.collisionFault(a, b, contact);
     this.collisionSequence += 1;
     this.collisionEvents.push({
       id: `collision-${this.collisionSequence}`,
@@ -553,12 +670,54 @@ export class Simulation {
       },
       kind: this.classifyCollision(a, b, contact),
       egoInvolved: a.kind === 'ego' || b.kind === 'ego',
+      faultVehicleId,
       severity,
       startedAt: this.time,
       duration: COLLISION_FEEDBACK_DURATION + severity * 0.2,
     });
     if (a.kind === 'ego' || b.kind === 'ego') this.collisions += 1;
+    for (const vehicle of [a, b]) {
+      const runtime = this.playerRuntimes.get(vehicle.id);
+      if (!runtime || vehicle.kind !== 'ego') continue;
+      runtime.collisions += 1;
+      if (faultVehicleId === vehicle.id) {
+        runtime.atFaultCollisions += 1;
+        runtime.stallUntil = Math.max(runtime.stallUntil, this.time + this.atFaultStallSeconds);
+      }
+    }
     this.collisionPairLastStarted.set(pairKey, this.time);
+  }
+
+  /**
+   * Picks the vehicle that caused a contact, or undefined when blame is shared.
+   * `behind` is the vehicle with the smaller road station.
+   */
+  private collisionFault(behind: VehicleState, ahead: VehicleState, contact: CollisionContact): string | undefined {
+    const kind = this.classifyCollision(behind, ahead, contact);
+    const behindEncroach = lateralSpeedToward(behind, ahead);
+    const aheadEncroach = lateralSpeedToward(ahead, behind);
+
+    if (kind === 'rear-end') {
+      // A sharp cut-in makes the merging vehicle responsible; otherwise the follower is.
+      const cutIn = aheadEncroach > CUT_IN_LATERAL_SPEED_THRESHOLD && aheadEncroach > behindEncroach;
+      return cutIn ? ahead.id : behind.id;
+    }
+
+    if (Math.max(behindEncroach, aheadEncroach) > FAULT_LATERAL_SPEED_THRESHOLD) {
+      return behindEncroach > aheadEncroach ? behind.id : ahead.id;
+    }
+
+    // Neither is moving sideways: blame whoever has drifted farther from their lane toward the other.
+    const behindDrift = this.laneDriftToward(behind, ahead);
+    const aheadDrift = this.laneDriftToward(ahead, behind);
+    if (Math.abs(behindDrift - aheadDrift) < 0.15) return undefined;
+    return behindDrift > aheadDrift ? behind.id : ahead.id;
+  }
+
+  private laneDriftToward(vehicle: VehicleState, other: VehicleState): number {
+    const direction = Math.sign(other.lateral - vehicle.lateral) || 1;
+    const laneCenter = this.road.getLaneCenterOffset(vehicle.targetLane);
+    return (vehicle.lateral - laneCenter) * direction;
   }
 
   private vehicleContact(a: VehicleState, b: VehicleState, margin = 0): CollisionContact | undefined {
@@ -725,7 +884,8 @@ export class Simulation {
 
   private targetTrafficCount(settings: PlaygroundSettings): number {
     const density = clamp(settings.trafficDensity, 0, 1);
-    return Math.round(TRAFFIC_MIN_COUNT + density ** 1.28 * (TRAFFIC_MAX_COUNT - TRAFFIC_MIN_COUNT));
+    const count = TRAFFIC_MIN_COUNT + density ** 1.28 * (TRAFFIC_MAX_COUNT - TRAFFIC_MIN_COUNT);
+    return Math.round(Math.min(TRAFFIC_MAX_SCALED_COUNT, count * this.trafficWindowScale()));
   }
 
   private trafficSpacing(settings: PlaygroundSettings): number {
@@ -751,29 +911,31 @@ export class Simulation {
   }
 
   private findOpenSpawnStation(lane: number, settings: PlaygroundSettings, preferAhead: boolean): number {
-    const minS = this.ego.s - TRAFFIC_BACK_BUFFER;
-    const maxS = this.ego.s + TRAFFIC_FRONT_BUFFER;
+    const firstPlayerS = this.minPlayerS();
+    const lastPlayerS = this.maxPlayerS();
+    const minS = firstPlayerS - TRAFFIC_BACK_BUFFER;
+    const maxS = lastPlayerS + TRAFFIC_FRONT_BUFFER;
     const minGap = Math.max(TRAFFIC_MIN_SPAWN_GAP, this.trafficSpacing(settings) * 0.62);
     const laneVehicles = this.vehicles
       .filter((vehicle) => vehicle.kind === 'traffic' && vehicle.laneIndex === lane)
       .map((vehicle) => vehicle.s)
       .sort((a, b) => a - b);
 
-    const randomMin = preferAhead ? this.ego.s + 170 : minS;
-    const randomMax = preferAhead ? maxS : this.ego.s - 80;
+    const randomMin = preferAhead ? lastPlayerS + 170 : minS;
+    const randomMax = preferAhead ? maxS : firstPlayerS - 80;
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const candidate = this.rng.range(randomMin, randomMax);
-      if (Math.abs(candidate - this.ego.s) < 28) continue;
+      if (this.nearAnyPlayer(candidate, 28)) continue;
       if (laneVehicles.every((station) => Math.abs(station - candidate) >= minGap)) return candidate;
     }
 
     const bounds = [minS, ...laneVehicles.filter((station) => station >= minS && station <= maxS), maxS];
-    let bestStation = preferAhead ? this.ego.s + 180 : this.ego.s - 120;
+    let bestStation = preferAhead ? lastPlayerS + 180 : firstPlayerS - 120;
     let bestGap = 0;
     for (let index = 1; index < bounds.length; index += 1) {
       const gap = bounds[index] - bounds[index - 1];
       const midpoint = (bounds[index] + bounds[index - 1]) / 2;
-      if (gap > bestGap && Math.abs(midpoint - this.ego.s) > 28) {
+      if (gap > bestGap && !this.nearAnyPlayer(midpoint, 28)) {
         bestGap = gap;
         bestStation = midpoint;
       }
@@ -813,6 +975,26 @@ function dot(a: CollisionAxis, b: CollisionAxis): number {
 
 function approximateVehicleMass(vehicle: VehicleState): number {
   return Math.max(900, vehicle.length * vehicle.width * 180);
+}
+
+function lateralSpeedToward(vehicle: VehicleState, other: VehicleState): number {
+  const direction = Math.sign(other.lateral - vehicle.lateral) || 1;
+  return vehicle.speed * Math.sin(vehicle.headingOffset) * direction;
+}
+
+function idleAppliedControls(targetLane: number): AppliedControls {
+  return {
+    userMotor: 0,
+    userSteering: 0,
+    finalMotor: 0,
+    finalSteering: 0,
+    actualMotor: 0,
+    actualSteering: 0,
+    targetLane,
+    steerOverridden: false,
+    motorOverridden: false,
+    invalidFields: [],
+  };
 }
 
 function collisionPairKey(a: VehicleState, b: VehicleState): string {
