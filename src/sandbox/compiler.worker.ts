@@ -45,3 +45,11 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
     } satisfies CompileResponseMessage);
   }
 });
+
+// Warm up TypeScript's lazily initialized internals so the first real compile isn't charged for them.
+try {
+  compileUserCode('export {};');
+} catch {
+  // A warm-up failure will surface again on the first real compile.
+}
+postMessage({ type: 'ready' });

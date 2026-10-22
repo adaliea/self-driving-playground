@@ -1,4 +1,5 @@
-export { CompilerClient } from './CompilerClient';
+export { CompilerClient, describeCompilerStatus } from './CompilerClient';
+export type { CompilerStatus } from './CompilerClient';
 export { SandboxClient } from './SandboxClient';
 export { RuntimeInspectionStore } from './RuntimeInspectionStore';
 export type { CompileResult } from './compiler';

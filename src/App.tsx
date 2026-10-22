@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import type { RenderTelemetry } from './rendering';
 import { CanvasRenderer } from './rendering';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation } from './simulation';
-import { CompilerClient, RuntimeInspectionStore, SandboxClient } from './sandbox';
+import { CompilerClient, describeCompilerStatus, RuntimeInspectionStore, SandboxClient, type CompilerStatus } from './sandbox';
 import { controllerExamples, defaultControllerExample, toolboxSnippets } from './toolbox';
 import type { PlaygroundSettings } from './types';
 import {
@@ -56,6 +56,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
   const [compileErrors, setCompileErrors] = useState<string[]>([]);
   const [runtimeError, setRuntimeError] = useState<string>();
   const [codeStatus, setCodeStatus] = useState('Starting code runner');
+  const [compilerStatus, setCompilerStatus] = useState<CompilerStatus>({ stage: 'idle' });
 
   const simulationRef = useRef<Simulation>();
   if (!simulationRef.current) simulationRef.current = new Simulation(settings);
@@ -75,9 +76,18 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
   const codeLoadedRef = useRef(false);
   const compileSequenceRef = useRef(0);
   const runtimeErrorRef = useRef<string | undefined>(undefined);
+  const firstCompileDoneRef = useRef(false);
 
   if (!compilerRef.current) compilerRef.current = new CompilerClient();
   if (!inspectionStoreRef.current) inspectionStoreRef.current = new RuntimeInspectionStore();
+
+  // While the compiler is still downloading or booting, its progress is more useful than the runner status.
+  const compilerLoading = compilerStatus.stage === 'downloading' || compilerStatus.stage === 'starting';
+  const displayedCodeStatus = compilerLoading
+    ? (describeCompilerStatus(compilerStatus) ?? codeStatus)
+    : codeStatus === 'Compiling TypeScript' && compilerStatus.stage === 'ready' && !firstCompileDoneRef.current
+      ? 'Step 3/3 · Compiling TypeScript'
+      : codeStatus;
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -117,7 +127,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
     sandbox
       .start()
       .then(() => {
-        if (!cancelled) setCodeStatus('Code runner ready');
+        if (!cancelled) setCodeStatus((status) => (status === 'Starting code runner' ? 'Code runner ready' : status));
       })
       .catch((error) => {
         if (!cancelled) setCodeStatus(`Code runner unavailable: ${formatError(error)}`);
@@ -140,6 +150,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
       let result;
       try {
         result = await compilerRef.current!.compile(code);
+        firstCompileDoneRef.current = true;
       } catch (error) {
         if (cancelled || sequence !== compileSequenceRef.current) return;
         setCompileErrors([formatError(error)]);
@@ -179,7 +190,13 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
   }, [code]);
 
   useEffect(() => {
-    return () => compilerRef.current?.dispose();
+    const compiler = compilerRef.current!;
+    const unsubscribe = compiler.subscribe(setCompilerStatus);
+    compiler.preload();
+    return () => {
+      unsubscribe();
+      compiler.dispose();
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -368,7 +385,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
               examples={controllerExamples}
               selectedExampleId={selectedExampleId}
               compileErrors={compileErrors}
-              codeStatus={codeStatus}
+              codeStatus={displayedCodeStatus}
               inspectionStore={inspectionStoreRef.current}
               toolbox={<ToolboxPanel snippets={toolboxSnippets} onInsert={insertSnippet} />}
               onCodeChange={updateCode}
