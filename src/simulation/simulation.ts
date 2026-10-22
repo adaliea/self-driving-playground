@@ -55,6 +55,15 @@ export interface SimulationViewOptions {
   aheadMeters?: number;
   /** Player whose sensors and telemetry are included. Defaults to the first player. */
   focusId?: string;
+  /** Road-frame poses that override vehicle positions, e.g. interpolated between steps for smooth rendering. */
+  poses?: ReadonlyMap<string, VehicleFrame>;
+}
+
+/** Vehicle pose in road coordinates. */
+export interface VehicleFrame {
+  s: number;
+  lateral: number;
+  headingOffset: number;
 }
 
 export interface PlayerRaceState {
@@ -319,13 +328,14 @@ export class Simulation {
         })),
       },
       vehicles: this.vehicles.map((vehicle) => {
-        const pose = this.road.worldPointAt(vehicle.s, vehicle.lateral);
+        const frame = view.poses?.get(vehicle.id) ?? vehicle;
+        const pose = this.road.worldPointAt(frame.s, frame.lateral);
         return {
           id: vehicle.id,
           kind: vehicle.kind,
           x: pose.x,
           y: pose.y,
-          heading: pose.heading + vehicle.headingOffset,
+          heading: pose.heading + frame.headingOffset,
           width: vehicle.width,
           length: vehicle.length,
           color: vehicle.color,
@@ -370,6 +380,16 @@ export class Simulation {
       },
       settings,
     };
+  }
+
+  /** Road-frame pose of every vehicle, keyed by id. */
+  getVehicleFrames(): Map<string, VehicleFrame> {
+    return new Map(
+      this.vehicles.map((vehicle) => [
+        vehicle.id,
+        { s: vehicle.s, lateral: vehicle.lateral, headingOffset: vehicle.headingOffset },
+      ]),
+    );
   }
 
   /** Progress and collision counts for each player, in grid order. */
