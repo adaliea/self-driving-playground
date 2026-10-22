@@ -269,6 +269,7 @@
                 const indexedDB = undefined;
                 const caches = undefined;
                 const postMessage = undefined;
+                /* runner-helpers:start (also used by server-side validation; see src/sandbox/runnerSource.ts) */
                 const __clamp = (value, min, max) => Math.max(min, Math.min(max, Number.isFinite(value) ? value : 0));
                 const __sampleLineAtY = (samples, y) => {
                   if (!Array.isArray(samples) || samples.length === 0) return undefined;
@@ -386,6 +387,7 @@
                   if (relativeTargetLane > 0) return __analyzeLaneBoundaries(laneLines.right, laneLines.farRight, mode !== 'preview');
                   return __analyzeLaneBoundaries(laneLines.left, laneLines.right, mode !== 'preview');
                 }
+                /* runner-helpers:end */
                 ${code}
                 return module.exports.autopilot || exports.autopilot || (typeof autopilot === 'function' ? autopilot : undefined);
               })();

@@ -14,9 +14,13 @@ import {
   type RoundState,
   type ServerToHostMessage,
   type ServerToPlayerMessage,
+  type ValidationReport,
 } from '../src/multiplayer/protocol';
+import type { Validator } from './validator';
 
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+/** Test drives running at once per room; later submissions wait their turn. */
+const MAX_CONCURRENT_VALIDATIONS = 3;
 
 interface RoomMeta {
   roomCode: string;
@@ -38,6 +42,7 @@ type SocketAttachment = { role: 'host' } | { role: 'player'; playerId: string };
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
   ASSETS: Fetcher;
+  LOADER: WorkerLoader;
 }
 
 /**
@@ -45,6 +50,13 @@ export interface Env {
  * host connections only, and relays host-computed round state and leaderboards to players.
  */
 export class Room extends DurableObject<Env> {
+  // Validation bookkeeping is in memory: the object stays awake while a validation is in flight,
+  // and losing it on eviction only forgets a pending test drive, which the player can resubmit.
+  private readonly validating = new Set<string>();
+  private readonly lastAttemptAt = new Map<string, number>();
+  private readonly validationQueue: (() => void)[] = [];
+  private activeValidations = 0;
+
   /** Creates the room. Returns undefined if this code is already in use. */
   async initialize(roomCode: string): Promise<string | undefined> {
     if (await this.ctx.storage.get<RoomMeta>('meta')) return undefined;
@@ -142,6 +154,7 @@ export class Room extends DurableObject<Env> {
         roomCode: meta.roomCode,
         round,
         version: player.version || undefined,
+        validating: this.validating.has(player.id) || undefined,
       } satisfies ServerToPlayerMessage);
       const leaderboard = await this.ctx.storage.get<LeaderboardEntry[]>('leaderboard');
       if (leaderboard) send(server, { type: 'leaderboard', entries: leaderboard } satisfies ServerToPlayerMessage);
@@ -199,20 +212,84 @@ export class Room extends DurableObject<Env> {
       send(socket, { type: 'error', message: `Driver code must be under ${MAX_SOURCE_BYTES / 1024} KB.` });
       return;
     }
+    if (this.validating.has(playerId)) {
+      send(socket, { type: 'error', message: 'Your last submission is still being test-driven.' });
+      return;
+    }
     const now = Date.now();
-    if (player.submittedAt !== undefined && now - player.submittedAt < MIN_SUBMIT_INTERVAL_MS) {
+    const lastAttempt = this.lastAttemptAt.get(playerId) ?? player.submittedAt;
+    if (lastAttempt !== undefined && now - lastAttempt < MIN_SUBMIT_INTERVAL_MS) {
       send(socket, { type: 'error', message: 'Slow down: wait a few seconds between submissions.' });
       return;
     }
 
+    this.lastAttemptAt.set(playerId, now);
+    this.validating.add(playerId);
+    send(socket, { type: 'submission-validating', queuedBehind: Math.max(0, this.activeValidations + this.validationQueue.length - MAX_CONCURRENT_VALIDATIONS + 1) });
+    // Not awaited: other messages keep flowing while the test drive runs.
+    void this.validateSubmission(playerId, message.source).finally(() => this.validating.delete(playerId));
+  }
+
+  /** Test-drives a submission and, if it passes, makes it the player's racing version. */
+  private async validateSubmission(playerId: string, source: string): Promise<void> {
+    let report: ValidationReport;
+    await this.acquireValidationSlot();
+    try {
+      const validator = (this.ctx.exports as unknown as { Validator: Service<Validator> }).Validator;
+      report = await validator.validate(source, await this.validationSeed(source));
+    } catch (error) {
+      console.error('Validation failed to run', error);
+      report = {
+        passed: false,
+        issues: [{ check: 'unavailable', message: 'The test drive could not run. Try submitting again in a moment.' }],
+      };
+    } finally {
+      this.releaseValidationSlot();
+    }
+
+    if (!report.passed) {
+      this.sendToPlayer(playerId, { type: 'submission-rejected', report });
+      return;
+    }
+    const player = (await this.players()).get(playerId);
+    if (!player) return;
+    const now = Date.now();
     player.version += 1;
     player.submittedAt = now;
-    player.source = message.source;
+    player.source = source;
     await this.savePlayer(player);
     await this.touch();
-    send(socket, { type: 'submission-accepted', version: player.version, submittedAt: now });
-    this.broadcastToHosts({ type: 'submission', playerId, version: player.version, submittedAt: now, source: message.source });
+    this.sendToPlayer(playerId, { type: 'submission-accepted', version: player.version, submittedAt: now, report });
+    this.broadcastToHosts({ type: 'submission', playerId, version: player.version, submittedAt: now, source });
     this.broadcastToHosts({ type: 'player', player: this.summary(player) });
+  }
+
+  /**
+   * Seeds the test drive from the room's secret and the source. Players can't predict the traffic
+   * they will face, and resubmitting identical code gets the same verdict instead of another roll.
+   */
+  private async validationSeed(source: string): Promise<number> {
+    const meta = await this.ctx.storage.get<RoomMeta>('meta');
+    const digest = await sha256(`${meta?.hostTokenHash ?? ''}\n${source}`);
+    return Number.parseInt(digest.slice(0, 8), 16);
+  }
+
+  private acquireValidationSlot(): Promise<void> {
+    if (this.activeValidations < MAX_CONCURRENT_VALIDATIONS) {
+      this.activeValidations += 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => this.validationQueue.push(resolve));
+  }
+
+  private releaseValidationSlot(): void {
+    const next = this.validationQueue.shift();
+    if (next) next();
+    else this.activeValidations -= 1;
+  }
+
+  private sendToPlayer(playerId: string, message: ServerToPlayerMessage): void {
+    for (const socket of this.ctx.getWebSockets(playerId)) send(socket, message);
   }
 
   private async handleHostMessage(socket: WebSocket, data: unknown): Promise<void> {

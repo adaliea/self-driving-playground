@@ -1,10 +1,13 @@
 import type { RenderSnapshot } from '../rendering';
 import { CompilerClient, SandboxClient } from '../sandbox';
-import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation, type PlayerRaceState, type VehicleFrame } from '../simulation';
+import { FIXED_TIMESTEP, Simulation, type PlayerRaceState, type VehicleFrame } from '../simulation';
 import { SeededRandom } from '../simulation/random';
 import type { PlaygroundSettings } from '../types';
 import type { DriverStatusUpdate, LeaderboardEntry, PlayerSummary, RoundPhase, RoundResult, RoundState } from './protocol';
+import { raceSettings } from './raceSettings';
 import { RACE_SCORING, applyRoundResults, roundPoints, scoreRound, sortLeaderboard } from './scoring';
+
+export { raceSettings };
 
 const MAX_STEPS_PER_TICK = 4;
 const DRIVER_TIMEOUT_MS = 28;
@@ -502,21 +505,6 @@ export class RaceEngine {
           : undefined,
     });
   }
-}
-
-export function raceSettings(round: number, trafficDensity: number): PlaygroundSettings {
-  return {
-    ...DEFAULT_SETTINGS,
-    seed: 1000 + round * 37,
-    trafficDensity,
-    startingSpeed: 20,
-    noisyLaneLines: true,
-    noisyVehicles: true,
-    actuatorVariation: true,
-    debugOverlays: false,
-    steerAssist: false,
-    accelerateAssist: false,
-  };
 }
 
 export function colorForPlayer(id: string): string {

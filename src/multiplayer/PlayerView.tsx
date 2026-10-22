@@ -1,4 +1,4 @@
-import { Flag, LogOut, Send, Trophy } from 'lucide-react';
+import { CheckCircle2, Flag, Loader2, LogOut, Send, ShieldCheck, Trophy, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import App, { type AppTopBarContext } from '../App';
 import { Button } from '../ui/Button';
@@ -14,9 +14,11 @@ import {
   type PlayerToServerMessage,
   type RoundState,
   type ServerToPlayerMessage,
+  type ValidationReport,
 } from './protocol';
 import { raceSettings, DEFAULT_RACE_CONFIG } from './RaceEngine';
 import { RACE_SCORING } from './scoring';
+import { VALIDATION_RULES, kmh, percent } from './validation';
 
 const PLAYER_NAME_KEY = 'self-driving-playground:player-name:v1';
 const playerSessionKey = (roomCode: string) => `self-driving-playground:player-session:${roomCode}:v1`;
@@ -135,6 +137,12 @@ function JoinForm({
   );
 }
 
+/** The server test-drives every submission before it may race. */
+type ValidationState =
+  | { phase: 'validating'; queuedBehind: number; source?: string }
+  | { phase: 'passed'; report: ValidationReport; source?: string; version: number }
+  | { phase: 'rejected'; report: ValidationReport; source?: string };
+
 interface RoomState {
   connection: ConnectionStatus;
   round: RoundState;
@@ -143,6 +151,7 @@ interface RoomState {
   submittedSource?: string;
   /** Latest presenter status for each submitted version. */
   statusByVersion: Record<number, DriverStatusUpdate>;
+  validation?: ValidationState;
   notice?: string;
 }
 
@@ -161,12 +170,36 @@ function PlayerRoom({ session, onLeave }: { session: PlayerSession; onLeave: () 
       setState((current) => {
         switch (message.type) {
           case 'welcome':
-            return { ...current, round: message.round, submittedVersion: message.version ?? current.submittedVersion };
-          case 'submission-accepted':
+            return {
+              ...current,
+              round: message.round,
+              submittedVersion: message.version ?? current.submittedVersion,
+              validation: message.validating
+                ? { phase: 'validating', queuedBehind: 0, source: pendingSourceRef.current }
+                : current.validation?.phase === 'validating'
+                  ? undefined
+                  : current.validation,
+            };
+          case 'submission-validating':
+            return {
+              ...current,
+              validation: { phase: 'validating', queuedBehind: message.queuedBehind, source: pendingSourceRef.current },
+              notice: undefined,
+            };
+          case 'submission-accepted': {
+            const source = current.validation?.source ?? pendingSourceRef.current;
             return {
               ...current,
               submittedVersion: message.version,
-              submittedSource: pendingSourceRef.current ?? current.submittedSource,
+              submittedSource: source ?? current.submittedSource,
+              validation: { phase: 'passed', report: message.report, source, version: message.version },
+              notice: undefined,
+            };
+          }
+          case 'submission-rejected':
+            return {
+              ...current,
+              validation: { phase: 'rejected', report: message.report, source: current.validation?.source ?? pendingSourceRef.current },
               notice: undefined,
             };
           case 'round-state':
@@ -230,6 +263,9 @@ function RaceBar({
   const entry = rank >= 0 ? state.leaderboard[rank] : undefined;
   const connected = state.connection === 'open';
   const unchanged = state.submittedSource !== undefined && state.submittedSource === context.code;
+  const validating = state.validation?.phase === 'validating';
+  // Test drives are seeded from the code, so resubmitting rejected code would only fail again.
+  const rejectedUnchanged = state.validation?.phase === 'rejected' && state.validation.source === context.code;
   const status = describeStatus(state, session.playerId);
   const secondsLeft = state.round.endsAt ? Math.max(0, Math.ceil((state.round.endsAt - Date.now()) / 1000)) : undefined;
 
@@ -274,24 +310,38 @@ function RaceBar({
           >
             Practice with race settings
           </button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={!connected || !context.codeReady || context.assistsOn || unchanged}
-            onClick={() => onSubmit(context.code)}
-            title={
-              !context.codeReady
-                ? 'Fix compile errors first'
-                : context.assistsOn
-                  ? 'Turn off steer and accelerate assist first: races run without them'
+          <div className="group relative">
+            <Button
+              type="button"
+              size="sm"
+              variant={rejectedUnchanged ? 'destructive' : 'default'}
+              disabled={!connected || !context.codeReady || context.assistsOn || unchanged || validating || rejectedUnchanged}
+              onClick={() => onSubmit(context.code)}
+              aria-describedby="submission-validation"
+            >
+              {validating ? <Loader2 className="animate-spin" /> : rejectedUnchanged ? <XCircle /> : <Send />}
+              {validating
+                ? 'Validating…'
+                : rejectedUnchanged
+                  ? 'Not accepted'
                   : unchanged
-                    ? 'This exact code is already submitted'
+                    ? `Submitted v${state.submittedVersion}`
+                    : state.submittedVersion
+                      ? 'Submit new version'
+                      : 'Submit to race'}
+            </Button>
+            <ValidationPopover
+              validation={state.validation}
+              racingVersion={state.submittedVersion}
+              blockedReason={
+                !context.codeReady
+                  ? 'Fix the compile errors in the editor first.'
+                  : context.assistsOn
+                    ? 'Turn off steer and accelerate assist first: races run without them.'
                     : undefined
-            }
-          >
-            <Send />
-            {unchanged ? `Submitted v${state.submittedVersion}` : state.submittedVersion ? 'Submit new version' : 'Submit to race'}
-          </Button>
+              }
+            />
+          </div>
           <Button type="button" size="sm" variant="ghost" onClick={onLeave} title="Leave room">
             <LogOut />
           </Button>
@@ -344,6 +394,19 @@ function describeStatus(
   playerId: string,
 ): { summary: string; details?: string; tone: 'info' | 'error' } | undefined {
   const version = state.submittedVersion;
+  const keepsRacing = version ? ` Version ${version} keeps racing.` : '';
+  if (state.validation?.phase === 'validating') {
+    const queue = state.validation.queuedBehind > 0 ? ` (waiting for ${state.validation.queuedBehind} ahead)` : '';
+    return { summary: `Test-driving your code before it can race${queue}… Hover the button for details.`, tone: 'info' };
+  }
+  if (state.validation?.phase === 'rejected') {
+    const [first, ...rest] = state.validation.report.issues;
+    return {
+      summary: `Not accepted: ${first?.message.split('\n')[0] ?? 'the test drive failed.'}${keepsRacing}`,
+      details: [...(first?.message.split('\n').slice(1) ?? []), ...rest.map((issue) => issue.message)].join('\n') || undefined,
+      tone: 'error',
+    };
+  }
   if (!version) return { summary: 'Write a driver, test it here, then submit it to race.', tone: 'info' };
   const racingVersion = state.round.phase === 'racing' ? state.round.racingVersions?.[playerId] : undefined;
   const racingNote = racingVersion && racingVersion !== version ? ` Version ${racingVersion} is racing this round.` : '';
@@ -365,4 +428,143 @@ function describeStatus(
     case 'ready':
       return { summary: `Version ${version} is ready for the next round.`, tone: 'info' };
   }
+}
+
+function ValidationPopover({
+  validation,
+  racingVersion,
+  blockedReason,
+}: {
+  validation?: ValidationState;
+  racingVersion?: number;
+  /** Why the button is disabled before submitting, if it is. */
+  blockedReason?: string;
+}) {
+  const rules = VALIDATION_RULES;
+  let icon = <ShieldCheck className="size-4 text-sky-300" />;
+  let title = 'Every submission is test-driven first';
+  let body: JSX.Element;
+
+  if (validation?.phase === 'validating') {
+    icon = <Loader2 className="size-4 animate-spin text-sky-300" />;
+    title = 'Test-driving your code';
+    body = (
+      <>
+        <p>
+          The server is running your driver on its own for {rules.simulatedSeconds} s in race traffic. This usually takes a few
+          seconds.
+        </p>
+        {validation.queuedBehind > 0 ? (
+          <p className="mt-1 text-amber-300">Waiting for {validation.queuedBehind} other test drive(s) to finish first.</p>
+        ) : null}
+        <RuleList />
+      </>
+    );
+  } else if (validation?.phase === 'passed') {
+    icon = <CheckCircle2 className="size-4 text-emerald-400" />;
+    title = `Version ${validation.version} passed its test drive`;
+    body = (
+      <>
+        <MetricTable report={validation.report} />
+        <p className="mt-2">It races from the start of the next round.</p>
+      </>
+    );
+  } else if (validation?.phase === 'rejected') {
+    icon = <XCircle className="size-4 text-red-400" />;
+    title = 'Not accepted for the race';
+    body = (
+      <>
+        <ul className="grid gap-1.5">
+          {validation.report.issues.map((issue) => (
+            <li key={issue.check} className="whitespace-pre-wrap text-red-300">
+              {issue.message}
+            </li>
+          ))}
+        </ul>
+        {validation.report.metrics ? <MetricTable report={validation.report} /> : null}
+        <p className="mt-2">
+          {racingVersion ? `Version ${racingVersion} keeps racing. ` : 'Nothing is racing for you yet. '}
+          Change your code and submit again.
+        </p>
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <p>
+          Before your code races, the server drives it on its own for {rules.simulatedSeconds} s in race traffic. Some
+          bumps and slow patches are fine.
+        </p>
+        <RuleList />
+        {blockedReason ? <p className="mt-2 text-amber-300">{blockedReason}</p> : null}
+      </>
+    );
+  }
+
+  return (
+    <div
+      id="submission-validation"
+      role="tooltip"
+      className="pointer-events-none absolute right-0 top-[calc(100%+0.5rem)] z-40 hidden w-80 rounded-md border border-input bg-popover p-3 text-left font-sans text-xs leading-relaxed text-popover-foreground shadow-xl shadow-black/50 group-focus-within:block group-hover:block"
+    >
+      <div className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
+        {icon}
+        {title}
+      </div>
+      {body}
+    </div>
+  );
+}
+
+function RuleList() {
+  const rules = VALIDATION_RULES;
+  return (
+    <>
+      <p className="mt-2 text-muted-foreground">A submission is rejected if it would spoil the race for others:</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+        <li>
+          crawling or stopped (under {kmh(rules.blockingSpeed)}) with no slower car close ahead for more than{' '}
+          {percent(rules.maxBlockingFraction)} of the drive
+        </li>
+        <li>causing more than {rules.maxAtFaultCollisions} crashes</li>
+        <li>erroring or timing out for a whole second</li>
+      </ul>
+    </>
+  );
+}
+
+function MetricTable({ report }: { report: ValidationReport }) {
+  const metrics = report.metrics;
+  if (!metrics) return null;
+  const rules = VALIDATION_RULES;
+  const rows: { label: string; value: string; limit?: string; failed: boolean }[] = [
+    { label: 'Average speed', value: kmh(metrics.averageSpeed), failed: false },
+    {
+      label: 'Slow, not held up',
+      value: percent(metrics.blockingFraction),
+      limit: `max ${percent(rules.maxBlockingFraction)}`,
+      failed: metrics.blockingFraction > rules.maxBlockingFraction,
+    },
+    {
+      label: 'Crashes caused',
+      value: String(metrics.atFaultCollisions),
+      limit: `max ${rules.maxAtFaultCollisions}`,
+      failed: metrics.atFaultCollisions > rules.maxAtFaultCollisions,
+    },
+    { label: 'Distance', value: `${Math.round(metrics.distance)} m in ${Math.round(metrics.simulatedSeconds)} s`, failed: false },
+  ];
+  if (metrics.failedSteps > 0) rows.push({ label: 'Steps that errored', value: String(metrics.failedSteps), failed: false });
+  return (
+    <table className="mt-2 w-full border-t border-border pt-1 tabular-nums">
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.label}>
+            <td className="py-0.5 pr-2 text-muted-foreground">{row.label}</td>
+            <td className={`py-0.5 text-right ${row.failed ? 'text-red-400' : 'text-foreground'}`}>{row.value}</td>
+            <td className="w-16 py-0.5 pl-2 text-right text-[11px] text-muted-foreground">{row.limit ?? ''}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 }

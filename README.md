@@ -38,13 +38,24 @@ This runs built-in traffic outside the user-code runner and reports traffic wave
 
 Open `/host` on the presenter screen. It creates a room and shows a five-character code. Players open `/play` (or `/play/CODE`), enter the code and a display name, then use the normal editor and simulator to practice. **Submit to race** sends the current code once it compiles locally.
 
-- The presenter's browser is authoritative. It compiles every submission and runs each player's driver in its own sandboxed iframe and worker, steps one shared simulation, and scores rounds. The room server never executes user code, and other players never receive anyone's source.
+- The presenter's browser is authoritative. It compiles every submission and runs each player's driver in its own sandboxed iframe and worker, steps one shared simulation, and scores rounds. Other players never receive anyone's source.
+- Every submission is test-driven on the server before it reaches the presenter (see **Submission validation** below). The button shows **Validating…** meanwhile; hover it for the result.
 - Rounds restart automatically (default 90 s race, 12 s break, adjustable under **Host controls**). Each round uses a new seed and a shuffled starting grid. A player's latest successfully compiled version races until they submit another. New versions take over at the next round, and a version that fails to compile leaves the previous one racing.
 - Score per round = meters driven − 150 per collision the player caused − 25 per collision they were involved in. Causing a collision also cuts throttle for 1.5 s. Fault goes to the follower in a rear-end, to a car that cuts in sharply, and in side contacts to the car moving sideways (or drifted farther from its lane). The leaderboard ranks total points across rounds and also shows each player's best round.
 - A driver that exceeds its 28 ms budget for 30 consecutive steps coasts for the rest of the round. Runtime errors are reported back to that player.
 - Race settings: noisy lanes and vehicles, actuator variation, no assists. Players can load the same settings locally with **Practice with race settings**.
 
-The room server is a Cloudflare Worker (`worker/`) with one Durable Object per room, using hibernatable WebSockets. `npm run dev` runs it locally through `@cloudflare/vite-plugin`. It stores players, their latest source, the round state, and the leaderboard for up to 24 hours of inactivity. It enforces a 64 KB source limit, a 3 s submission interval, and a maximum of 30 players per room, and only the host token may publish round state or leaderboards.
+### Submission validation
+
+The room server test-drives each submission before it may race (`worker/validator.ts`, rules in `src/multiplayer/validation.ts`). It compiles the code with the editor's compiler, loads the driver into its own [Dynamic Worker](https://developers.cloudflare.com/dynamic-workers/) isolate with no network access, and runs a 30 s solo drive in race conditions (noise on, no assists). To keep it cheap, traffic is only simulated from 120 m behind to 320 m ahead of the test car instead of the race's 250 m / 820 m, with density raised to 0.58 so the car sees as much traffic as the race-sized window gives at 0.55. The seed comes from the room secret and the source, so identical code always gets the same verdict. A submission is rejected if it:
+
+- spends more than 20% of the drive under 54 km/h without a slower car within 60 m ahead and without accelerating (parked, crawling, or coasting cars),
+- causes more than 3 collisions, or
+- throws or times out for 45 steps in a row.
+
+Rejected code never reaches the presenter, and the player's previous version keeps racing. Each validation uses about 1 s of CPU, and at most 3 run at once per room. This needs the Workers Paid plan, since Dynamic Workers aren't available on the free plan. Validation is a filter, not a guarantee: a driver that behaves for 30 s and then misbehaves will pass.
+
+The room server is a Cloudflare Worker (`worker/`) with one Durable Object per room, using hibernatable WebSockets. `npm run dev` runs it locally through `@cloudflare/vite-plugin`. It stores players, their latest source, the round state, and the leaderboard for up to 24 hours of inactivity. It enforces a 64 KB source limit, a 3 s submission interval, and a maximum of 50 players per room, and only the host token may publish round state or leaderboards.
 
 ## Project Structure
 

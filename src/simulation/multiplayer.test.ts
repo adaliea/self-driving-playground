@@ -105,4 +105,35 @@ describe('multi-player simulation', () => {
     const event = simulation.getSnapshot(DEFAULT_SETTINGS).collisionEvents[0];
     expect(event).toMatchObject({ kind: 'sideswipe', faultVehicleId: swerving.id });
   });
+
+  it('scales traffic with a smaller window so density stays the same', () => {
+    const traffic = (simulation: Simulation) =>
+      (simulation as unknown as SimulationInternals).vehicles.filter((vehicle) => vehicle.kind === 'traffic');
+    const full = traffic(new Simulation(DEFAULT_SETTINGS, { players: players.slice(0, 1) }));
+    const small = traffic(
+      new Simulation(DEFAULT_SETTINGS, { players: players.slice(0, 1), trafficWindow: { behind: 120, ahead: 320 } }),
+    );
+    expect(small.length / full.length).toBeCloseTo(440 / 1070, 1);
+    const [ego] = new Simulation(DEFAULT_SETTINGS, { players: players.slice(0, 1) }).getPlayerStates();
+    for (const vehicle of small) {
+      expect(vehicle.s).toBeGreaterThan(ego.s - 120);
+      expect(vehicle.s).toBeLessThan(ego.s + 320);
+    }
+  });
+
+  // The short vehicle sits past its own contact range, so ending the search there would miss the trailer.
+  it('still finds a contact with a long vehicle beyond a short one', () => {
+    const simulation = new Simulation(DEFAULT_SETTINGS, { players: players.slice(0, 2) });
+    const internals = simulation as unknown as SimulationInternals;
+    const [front, back] = internals.vehicles.filter((vehicle) => vehicle.kind === 'ego');
+    const trailer = { ...front, id: 'trailer', kind: 'traffic' as const, length: 16, s: 206, lateral: 0, speed: 15 };
+    const bike = { ...front, id: 'bike', kind: 'traffic' as const, length: 2, width: 0.8, s: 204.5, lateral: 3.7, speed: 15 };
+    back.s = 196.5;
+    back.lateral = 0;
+    back.speed = 30;
+    front.s = 1000;
+    internals.vehicles = [back, bike, trailer, front];
+    internals.resolveCloseVehicles();
+    expect(simulation.getSnapshot(DEFAULT_SETTINGS).collisionEvents[0]).toMatchObject({ vehicleIds: [back.id, 'trailer'] });
+  });
 });

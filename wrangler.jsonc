@@ -2,6 +2,8 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "self-driving-playground",
   "compatibility_date": "2026-07-03",
+  // The TypeScript compiler used to validate submissions imports Node built-ins.
+  "compatibility_flags": ["nodejs_compat"],
   "main": "./worker/index.ts",
   "assets": {
     "binding": "ASSETS",
@@ -9,6 +11,10 @@
     // Without this, SPA fallback would answer /api/* (including WebSocket upgrades) with index.html.
     "run_worker_first": ["/api/*"]
   },
+  // Runs each submitted driver in its own sandboxed isolate during its pre-race test drive.
+  "worker_loaders": [{ "binding": "LOADER" }],
+  // A test drive uses about 1 s of CPU; this caps a pathological compile or simulation.
+  "limits": { "cpu_ms": 15000 },
   "durable_objects": {
     "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
   },

@@ -1,6 +1,7 @@
 // Wire protocol shared by the room Durable Object, the host (presenter) view, and player clients.
 // The host is authoritative: it runs every submitted driver and computes scores. The room server
-// only relays code to hosts and results back to players, so it never executes user code.
+// relays code to hosts and results back to players. Before relaying, it test-drives each submission
+// in an isolated Dynamic Worker (worker/validator.ts) and rejects drivers that would spoil the race.
 
 export const ROOM_CODE_LENGTH = 5;
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -8,8 +9,11 @@ export const MAX_PLAYER_NAME_LENGTH = 24;
 export const MAX_SOURCE_BYTES = 64 * 1024;
 export const MAX_MESSAGE_BYTES = MAX_SOURCE_BYTES + 4 * 1024;
 export const MIN_SUBMIT_INTERVAL_MS = 3000;
-/** Kept near the measured comfortable load: ~9 ms per simulation step at 24 players. */
-export const MAX_PLAYERS_PER_ROOM = 30;
+/**
+ * The presenter steps every car every 22 ms. Simulation alone measured ~8 ms per step (p95 ~12 ms)
+ * at 50 players, plus each driver's sandbox round trip.
+ */
+export const MAX_PLAYERS_PER_ROOM = 50;
 
 export type RoundPhase = 'lobby' | 'racing' | 'intermission';
 
@@ -61,6 +65,34 @@ export interface DriverStatusUpdate {
   message?: string;
 }
 
+/** Measurements from the pre-race test drive every submission must pass. See validation.ts. */
+export interface ValidationMetrics {
+  simulatedSeconds: number;
+  distance: number;
+  /** Average speed after warmup, in m/s. */
+  averageSpeed: number;
+  /** Share of post-warmup time spent slow with nothing ahead holding the car back. */
+  blockingFraction: number;
+  collisions: number;
+  atFaultCollisions: number;
+  failedSteps: number;
+}
+
+export type ValidationCheck = 'blocking' | 'collisions' | 'errors' | 'compile' | 'timeout' | 'unavailable';
+
+export interface ValidationIssue {
+  check: ValidationCheck;
+  message: string;
+}
+
+export interface ValidationReport {
+  passed: boolean;
+  issues: ValidationIssue[];
+  metrics?: ValidationMetrics;
+  /** First error the driver threw, if any. */
+  firstError?: string;
+}
+
 // ---- Player -> server ----
 export type PlayerToServerMessage = { type: 'submit'; source: string } | { type: 'ping' };
 
@@ -73,8 +105,21 @@ export type HostToServerMessage =
 
 // ---- Server -> player ----
 export type ServerToPlayerMessage =
-  | { type: 'welcome'; playerId: string; name: string; roomCode: string; round: RoundState; version?: number }
-  | { type: 'submission-accepted'; version: number; submittedAt: number }
+  | {
+      type: 'welcome';
+      playerId: string;
+      name: string;
+      roomCode: string;
+      round: RoundState;
+      version?: number;
+      /** True while a submission from this player is still being test-driven. */
+      validating?: boolean;
+    }
+  /** The submission is being test-driven. `queuedBehind` counts validations that must finish first. */
+  | { type: 'submission-validating'; queuedBehind: number }
+  | { type: 'submission-accepted'; version: number; submittedAt: number; report: ValidationReport }
+  /** The submission failed its test drive and was not sent to the race. The previous version keeps racing. */
+  | { type: 'submission-rejected'; report: ValidationReport }
   | { type: 'round-state'; state: RoundState }
   | { type: 'leaderboard'; entries: LeaderboardEntry[] }
   | ({ type: 'driver-status' } & DriverStatusUpdate)

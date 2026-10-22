@@ -103,7 +103,8 @@ export class SensorSimulator {
   ): TrafficAutopilotInput {
     const laneIndex = road.getLaneIndex(subject.lateral);
 
-    const observation = this.observeVehicles(subject, vehicles, road, false, rng, dt);
+    // Traffic reads ground-truth tracks only, so skip building its unused measurement list.
+    const observation = this.observeVehicles(subject, vehicles, road, false, rng, dt, false);
     return {
       dt,
       ego: {
@@ -125,6 +126,7 @@ export class SensorSimulator {
     noisy: boolean,
     rng: SeededRandom,
     dt: number,
+    includeMeasurements = true,
   ): VehicleObservationFrame {
     const subjectPose = road.worldPointAt(subject.s, subject.lateral);
     const subjectHeading = subjectPose.heading + subject.headingOffset;
@@ -179,7 +181,7 @@ export class SensorSimulator {
       truthTracks.push(truth);
 
       if (!noisy) {
-        measurements.push(measurementFromTruth(truth));
+        if (includeMeasurements) measurements.push(measurementFromTruth(truth));
         continue;
       }
 

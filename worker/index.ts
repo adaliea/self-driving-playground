@@ -9,6 +9,7 @@ import {
 import type { Env } from './room';
 
 export { Room } from './room';
+export { Validator } from './validator';
 
 const ROOM_ROUTE = /^\/api\/rooms\/([A-Za-z0-9]+)\/(join|ws)$/;
 

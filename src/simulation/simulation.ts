@@ -67,6 +67,12 @@ export interface SimulationOptions {
   players?: SimulationPlayer[];
   /** Seconds of forced coasting after a player causes a collision. Disabled by default. */
   atFaultStallSeconds?: number;
+  /**
+   * Meters of traffic kept behind the rearmost player and ahead of the frontmost. Traffic count scales with
+   * the window, so a smaller window keeps the same density with fewer cars to simulate. New traffic
+   * spawns 170 m or more ahead, so `ahead` must be well above that.
+   */
+  trafficWindow?: { behind: number; ahead: number };
 }
 
 export interface SimulationViewOptions {
@@ -176,11 +182,15 @@ export class Simulation {
   private collisionVisualUntil = new Map<string, number>();
   private readonly players: SimulationPlayer[];
   private readonly atFaultStallSeconds: number;
+  private readonly trafficBehind: number;
+  private readonly trafficAhead: number;
   private playerRuntimes = new Map<string, PlayerRuntime>();
 
   constructor(settings: PlaygroundSettings, options: SimulationOptions = {}) {
     this.players = options.players?.length ? options.players : [DEFAULT_PLAYER];
     this.atFaultStallSeconds = Math.max(0, options.atFaultStallSeconds ?? 0);
+    this.trafficBehind = options.trafficWindow?.behind ?? TRAFFIC_BACK_BUFFER;
+    this.trafficAhead = options.trafficWindow?.ahead ?? TRAFFIC_FRONT_BUFFER;
     this.road = new Road(settings.seed);
     this.rng = new SeededRandom(settings.seed);
     this.reset(settings);
@@ -444,6 +454,22 @@ export class Simulation {
     return this.time;
   }
 
+  /**
+   * The nearest vehicle ahead whose body comes within `lateralMargin` meters of overlapping the
+   * player's: true bumper-to-bumper gap and its speed.
+   */
+  playerLeadAhead(id: string, lateralMargin = 0): { gap: number; speed: number } | undefined {
+    const ego = this.playerVehicle(id);
+    let lead: { gap: number; speed: number } | undefined;
+    for (const other of this.vehicles) {
+      if (other === ego || other.s <= ego.s) continue;
+      if (Math.abs(other.lateral - ego.lateral) > (other.width + ego.width) / 2 + lateralMargin) continue;
+      const gap = other.s - ego.s - (other.length + ego.length) / 2;
+      if (!lead || gap < lead.gap) lead = { gap, speed: other.speed };
+    }
+    return lead;
+  }
+
   private getLeadVehicleTelemetry(input: AutopilotInput) {
     const lead = closestVehicleAhead(input.vehicles, input.laneLines);
     if (!lead) return undefined;
@@ -521,8 +547,8 @@ export class Simulation {
 
   /** Traffic count scales with how far the players have spread so density stays comparable. */
   private trafficWindowScale(): number {
-    const base = TRAFFIC_BACK_BUFFER + TRAFFIC_FRONT_BUFFER;
-    return (this.maxPlayerS() - this.minPlayerS() + base) / base;
+    const window = this.maxPlayerS() - this.minPlayerS() + this.trafficBehind + this.trafficAhead;
+    return window / (TRAFFIC_BACK_BUFFER + TRAFFIC_FRONT_BUFFER);
   }
 
   private seedTraffic(settings: PlaygroundSettings): void {
@@ -531,8 +557,8 @@ export class Simulation {
     let index = 0;
 
     for (let lane = 0; lane < this.road.laneCount && index < count; lane += 1) {
-      let station = this.minPlayerS() - TRAFFIC_BACK_BUFFER + this.rng.range(0, spacing);
-      while (station < this.maxPlayerS() + TRAFFIC_FRONT_BUFFER && index < count) {
+      let station = this.minPlayerS() - this.trafficBehind + this.rng.range(0, spacing);
+      while (station < this.maxPlayerS() + this.trafficAhead && index < count) {
         if (!this.nearAnyPlayer(station, 26)) {
           this.vehicles.push(this.createTrafficVehicle(index, lane, station, settings));
           index += 1;
@@ -578,7 +604,7 @@ export class Simulation {
     for (const vehicle of this.vehicles) {
       if (vehicle.kind !== 'traffic') continue;
       const minS = this.minPlayerS();
-      if (vehicle.s < minS - TRAFFIC_BACK_BUFFER || vehicle.s > this.maxPlayerS() + TRAFFIC_FRONT_BUFFER) {
+      if (vehicle.s < minS - this.trafficBehind || vehicle.s > this.maxPlayerS() + this.trafficAhead) {
         const lane = this.rng.int(0, this.road.laneCount - 1);
         vehicle.s = this.findOpenSpawnStation(lane, settings, vehicle.s < minS);
         vehicle.lateral = this.road.getLaneCenterOffset(lane);
@@ -688,17 +714,22 @@ export class Simulation {
     for (const vehicle of this.vehicles) vehicle.collision = false;
     const collisionPairsThisStep = new Set<string>();
     const sortedVehicles = [...this.vehicles].sort((a, b) => a.s - b.s);
+    let largestDiagonal = 0;
+    for (const vehicle of sortedVehicles) largestDiagonal = Math.max(largestDiagonal, Math.hypot(vehicle.length, vehicle.width));
 
     for (let behindIndex = 0; behindIndex < sortedVehicles.length; behindIndex += 1) {
       const behind = sortedVehicles[behindIndex];
+      const behindDiagonal = Math.hypot(behind.length, behind.width);
+      // No vehicle farther ahead than this can reach `behind`, whatever its size.
+      const searchLimit = (behindDiagonal + largestDiagonal) / 2 + 3.5;
       for (let aheadIndex = behindIndex + 1; aheadIndex < sortedVehicles.length; aheadIndex += 1) {
         const ahead = sortedVehicles[aheadIndex];
         const gap = ahead.s - behind.s;
+        if (gap > searchLimit) break;
         // Half diagonals enclose rotated bodies; the extra distance allows for road curvature.
-        // This bound depends on both vehicles, so a short car cannot terminate the search
-        // before a longer vehicle farther ahead is considered.
-        const maxRelevantGap =
-          (Math.hypot(behind.length, behind.width) + Math.hypot(ahead.length, ahead.width)) / 2 + 3.5;
+        // This bound depends on both vehicles, so a short car cannot end the search early;
+        // `searchLimit` above covers the longest vehicle instead.
+        const maxRelevantGap = (behindDiagonal + Math.hypot(ahead.length, ahead.width)) / 2 + 3.5;
         if (gap > maxRelevantGap) continue;
 
         const lateralGap = Math.abs(ahead.lateral - behind.lateral);
@@ -1029,8 +1060,8 @@ export class Simulation {
   private findOpenSpawnStation(lane: number, settings: PlaygroundSettings, preferAhead: boolean): number {
     const firstPlayerS = this.minPlayerS();
     const lastPlayerS = this.maxPlayerS();
-    const minS = firstPlayerS - TRAFFIC_BACK_BUFFER;
-    const maxS = lastPlayerS + TRAFFIC_FRONT_BUFFER;
+    const minS = firstPlayerS - this.trafficBehind;
+    const maxS = lastPlayerS + this.trafficAhead;
     const minGap = Math.max(TRAFFIC_MIN_SPAWN_GAP, this.trafficSpacing(settings) * 0.62);
     const laneVehicles = this.vehicles
       .filter((vehicle) => vehicle.kind === 'traffic' && vehicle.laneIndex === lane)
