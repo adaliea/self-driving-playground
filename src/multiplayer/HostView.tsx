@@ -17,7 +17,8 @@ const MAX_SKIPPED_FRAMES = 2;
 
 const ink = '#1d1b2e';
 const panel = 'rounded-2xl border-[3px] border-[#1d1b2e] bg-white shadow-[4px_4px_0_#1d1b2e]';
-const fontStyle: CSSProperties = { fontFamily: CARTOON_FONT };
+// The presenter view is light; the rest of the app sets a dark color scheme on :root.
+const fontStyle: CSSProperties = { fontFamily: CARTOON_FONT, colorScheme: 'light' };
 
 interface HostUiState {
   phase: RoundPhase;
@@ -413,7 +414,7 @@ export function HostView() {
                 max={600}
                 value={config.roundSeconds}
                 onChange={(event) => updateConfig({ roundSeconds: clampInput(event.target.value, 20, 600, 90) })}
-                className="w-20 rounded border-2 border-[#1d1b2e] px-1"
+                className="w-20 rounded border-2 border-[#1d1b2e] bg-white px-1 text-[#1d1b2e]"
               />
             </label>
             <label className="flex items-center justify-between gap-2 py-1">
@@ -424,7 +425,7 @@ export function HostView() {
                 max={300}
                 value={config.intermissionSeconds}
                 onChange={(event) => updateConfig({ intermissionSeconds: clampInput(event.target.value, 3, 300, 12) })}
-                className="w-20 rounded border-2 border-[#1d1b2e] px-1"
+                className="w-20 rounded border-2 border-[#1d1b2e] bg-white px-1 text-[#1d1b2e]"
               />
             </label>
             <label className="flex items-center justify-between gap-2 py-1">

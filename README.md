@@ -44,7 +44,7 @@ Open `/host` on the presenter screen. It creates a room and shows a five-charact
 - A driver that exceeds its 28 ms budget for 30 consecutive steps coasts for the rest of the round. Runtime errors are reported back to that player.
 - Race settings: noisy lanes and vehicles, actuator variation, no assists. Players can load the same settings locally with **Practice with race settings**.
 
-The room server is a Cloudflare Worker (`worker/`) with one Durable Object per room, using hibernatable WebSockets. `npm run dev` runs it locally through `@cloudflare/vite-plugin`. It stores players, their latest source, the round state, and the leaderboard for up to 24 hours of inactivity. It enforces a 64 KB source limit, a 3 s submission interval, and a maximum of 40 players per room, and only the host token may publish round state or leaderboards.
+The room server is a Cloudflare Worker (`worker/`) with one Durable Object per room, using hibernatable WebSockets. `npm run dev` runs it locally through `@cloudflare/vite-plugin`. It stores players, their latest source, the round state, and the leaderboard for up to 24 hours of inactivity. It enforces a 64 KB source limit, a 3 s submission interval, and a maximum of 30 players per room, and only the host token may publish round state or leaderboards.
 
 ## Project Structure
 
