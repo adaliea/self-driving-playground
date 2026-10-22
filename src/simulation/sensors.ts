@@ -44,6 +44,9 @@ interface VehicleObservationFrame {
 const CORRELATED_BIAS_WEIGHT = 0.22;
 const INDEPENDENT_NOISE_WEIGHT = Math.sqrt(1 - CORRELATED_BIAS_WEIGHT ** 2);
 
+const SENSOR_STATION_CULL_BEHIND = 90;
+const SENSOR_STATION_CULL_AHEAD = 220;
+
 export class SensorSimulator {
   private readonly measurementNoise = new Map<string, Map<string, MeasurementNoiseState>>();
   private readonly vehicleTrackers = new Map<string, VehicleTracker>();
@@ -136,6 +139,9 @@ export class SensorSimulator {
 
     for (const vehicle of vehicles) {
       if (vehicle.id === subject.id) continue;
+      // Road distance bounds straight-line distance, so this cheap check never drops a visible vehicle.
+      const stationDelta = vehicle.s - subject.s;
+      if (stationDelta < -SENSOR_STATION_CULL_BEHIND || stationDelta > SENSOR_STATION_CULL_AHEAD) continue;
       const pose = road.worldPointAt(vehicle.s, vehicle.lateral);
       const dx = pose.x - subjectPose.x;
       const dy = pose.y - subjectPose.y;

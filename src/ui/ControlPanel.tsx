@@ -1,5 +1,5 @@
 import { CircleHelp, Pause, Play, RotateCcw, SlidersHorizontal } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { PlaygroundSettings } from '../types';
 import { Button } from './Button';
 import { NoiseInfoDialog } from './NoiseInfoDialog';
@@ -12,9 +12,18 @@ interface ControlPanelProps {
   onReset: () => void;
   onResetSettings: () => void;
   onSettingsChange: (settings: PlaygroundSettings) => void;
+  actions?: ReactNode;
 }
 
-export function ControlPanel({ running, settings, onRunningChange, onReset, onResetSettings, onSettingsChange }: ControlPanelProps) {
+export function ControlPanel({
+  running,
+  settings,
+  onRunningChange,
+  onReset,
+  onResetSettings,
+  onSettingsChange,
+  actions,
+}: ControlPanelProps) {
   const [open, setOpen] = useState(false);
   const [noiseInfoOpen, setNoiseInfoOpen] = useState(false);
   const update = <K extends keyof PlaygroundSettings>(key: K, value: PlaygroundSettings[K]) => {
@@ -35,15 +44,18 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
           </Button>
         </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => setOpen((current) => !current)}
-          aria-expanded={open}
-        >
-          <SlidersHorizontal />
-          Settings
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {actions}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen((current) => !current)}
+            aria-expanded={open}
+          >
+            <SlidersHorizontal />
+            Settings
+          </Button>
+        </div>
       </div>
 
       {open ? (

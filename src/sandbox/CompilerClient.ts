@@ -37,6 +37,8 @@ export class CompilerClient {
       const timer = window.setTimeout(() => {
         this.pendingCompiles.delete(id);
         reject(new Error('TypeScript compiler did not respond in time.'));
+        // A pathological source can wedge the worker; restart it so later compiles still run.
+        this.restartWorker(new Error('TypeScript compiler was restarted.'));
       }, 10000);
 
       this.pendingCompiles.set(id, { resolve, reject, timer });
@@ -45,9 +47,13 @@ export class CompilerClient {
   }
 
   dispose(): void {
+    this.restartWorker(new Error('Compiler disposed.'));
+  }
+
+  private restartWorker(reason: Error): void {
     for (const pending of this.pendingCompiles.values()) {
       window.clearTimeout(pending.timer);
-      pending.reject(new Error('Compiler disposed.'));
+      pending.reject(reason);
     }
     this.pendingCompiles.clear();
     this.worker?.removeEventListener('message', this.handleMessage);

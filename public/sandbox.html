@@ -408,7 +408,7 @@
                   id: message.id,
                   output,
                   durationMs: performance.now() - started,
-                  inspection: __inspectionSnapshot()
+                  inspection: message.inspect === false ? undefined : __inspectionSnapshot()
                 });
               } catch (error) {
                 __sandboxSend({
@@ -488,7 +488,7 @@
             }, Math.max(4, Math.min(100, message.timeoutMs)));
 
             pending.set(message.id, { timer });
-            worker.postMessage({ type: 'run-autopilot', id: message.id, input: message.input });
+            worker.postMessage({ type: 'run-autopilot', id: message.id, input: message.input, inspect: message.inspect !== false });
           }
         });
 

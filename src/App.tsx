@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { RenderTelemetry } from './rendering';
 import { CanvasRenderer } from './rendering';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation } from './simulation';
@@ -33,7 +33,20 @@ interface InitialController {
   selectedExampleId: string;
 }
 
-function App() {
+export interface AppTopBarContext {
+  code: string;
+  /** True when the current editor code compiled and loaded into the local runner. */
+  codeReady: boolean;
+  applySettings: (settings: Partial<PlaygroundSettings>) => void;
+}
+
+interface AppProps {
+  /** Optional bar above the editor and simulator, used by multiplayer rooms. */
+  renderTopBar?: (context: AppTopBarContext) => ReactNode;
+  controlPanelActions?: ReactNode;
+}
+
+function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
   const [initialController] = useState(loadInitialController);
   const [settings, setSettings] = useState<PlaygroundSettings>(loadStoredSettings);
   const [running, setRunning] = useState(false);
@@ -328,9 +341,18 @@ function App() {
   const pendingExample = controllerExamples.find((example) => example.id === pendingExampleId);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <main className="grid min-h-screen min-w-0 grid-cols-1 lg:grid-cols-2">
-        <div className="grid min-h-[620px] min-w-0 border-r border-border lg:h-screen">
+    <div className="flex min-h-screen flex-col bg-background text-foreground lg:h-screen">
+      {renderTopBar?.({
+        code,
+        codeReady: codeStatus === 'Code loaded' && compileErrors.length === 0,
+        applySettings: (patch) => {
+          const next = { ...settingsRef.current, ...patch };
+          updateSettings(next);
+          resetSimulation();
+        },
+      })}
+      <main className="grid min-h-0 min-w-0 flex-1 grid-cols-1 lg:grid-cols-2">
+        <div className="grid min-h-[620px] min-w-0 border-r border-border lg:h-full lg:min-h-0">
           <Suspense
             fallback={
               <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden bg-background">
@@ -357,8 +379,9 @@ function App() {
           </Suspense>
         </div>
 
-        <div className="flex min-h-[620px] min-w-0 flex-col lg:h-screen">
+        <div className="flex min-h-[620px] min-w-0 flex-col lg:h-full lg:min-h-0">
           <ControlPanel
+            actions={controlPanelActions}
             running={running}
             settings={settings}
             onRunningChange={setRunning}
