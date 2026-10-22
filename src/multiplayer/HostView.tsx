@@ -10,6 +10,8 @@ const UI_REFRESH_MS = 250;
 const PACK_WINDOW_METERS = 180;
 const MIN_SCALE = 5;
 const MAX_SCALE = 13;
+const BACKLOG_FRAME_SKIP_SECONDS = 0.08;
+const MAX_SKIPPED_FRAMES = 2;
 
 const ink = '#1d1b2e';
 const panel = 'rounded-2xl border-[3px] border-[#1d1b2e] bg-white shadow-[4px_4px_0_#1d1b2e]';
@@ -119,7 +121,26 @@ export function HostView() {
     };
   }, [session]);
 
-  // Simulation + render loop.
+  // Simulation loop, separate from rendering so slow frames do not slow the race clock.
+  useEffect(() => {
+    let disposed = false;
+    let previous = performance.now();
+    const loop = async () => {
+      while (!disposed) {
+        const now = performance.now();
+        const elapsed = (now - previous) / 1000;
+        previous = now;
+        await engineRef.current?.tick(elapsed);
+        await new Promise((resolve) => window.setTimeout(resolve, 4));
+      }
+    };
+    void loop();
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  // Render loop.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
@@ -129,13 +150,19 @@ export function HostView() {
     const camera = { centerS: 0, scale: 9, round: -1 };
     let previous = performance.now();
     let frame = 0;
+    let skipped = 0;
 
     const loop = (now: number) => {
       const elapsed = Math.max(0, (now - previous) / 1000);
       previous = now;
       const engine = engineRef.current;
-      if (engine) void engine.tick(elapsed);
-
+      // When drivers are falling behind real time, drop frames to free the main thread for them.
+      if (engine && engine.backlogSeconds > BACKLOG_FRAME_SKIP_SECONDS && skipped < MAX_SKIPPED_FRAMES) {
+        skipped += 1;
+        frame = requestAnimationFrame(loop);
+        return;
+      }
+      skipped = 0;
       const states = engine?.playerStates() ?? [];
       if (!engine || states.length === 0) {
         renderer.renderIdle(now / 1000);

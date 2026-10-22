@@ -186,6 +186,11 @@ export class RaceEngine {
     return 0;
   }
 
+  /** Simulated seconds the race is behind the wall clock. */
+  get backlogSeconds(): number {
+    return this.phase === 'racing' && !this.paused ? this.accumulator : 0;
+  }
+
   get racerIds(): string[] {
     return this.racers.map((racer) => racer.driver.playerId);
   }
