@@ -24,7 +24,7 @@ npm run deploy:dry-run
 npm run deploy
 ```
 
-The Workers config in `wrangler.jsonc` deploys the Vite `dist/` output as static assets and enables single-page-app fallback routing.
+The Workers config in `wrangler.jsonc` serves the Vite build as static assets with single-page-app fallback, routes `/api/*` to the Worker first, and binds the `Room` Durable Object used for multiplayer. `npm run deploy` builds before deploying.
 
 Headless traffic/personality report:
 
@@ -33,6 +33,18 @@ npm run traffic:report -- --density 0.9 --runs 3 --seconds 90 --warmup 15 --star
 ```
 
 This runs built-in traffic outside the user-code runner and reports traffic wave strength, speed spread, physical clearance, lane-keeping quality, assigned-lane exits, road exits, flow, collision events, hard braking events, lane changes, and per-personality behavior. Use `--noisy-lanes`, `--noisy-vehicles`, `--actuator-variation`, or `--json` for alternate test modes.
+
+## Multiplayer Races
+
+Open `/host` on the presenter screen. It creates a room and shows a five-character code. Players open `/play` (or `/play/CODE`), enter the code and a display name, then use the normal editor and simulator to practice. **Submit to race** sends the current code once it compiles locally.
+
+- The presenter's browser is authoritative. It compiles every submission and runs each player's driver in its own sandboxed iframe and worker, steps one shared simulation, and scores rounds. The room server never executes user code, and other players never receive anyone's source.
+- Rounds restart automatically (default 90 s race, 12 s break, adjustable under **Host controls**). Each round uses a new seed and a shuffled starting grid. A player's latest successfully compiled version races until they submit another. New versions take over at the next round, and a version that fails to compile leaves the previous one racing.
+- Score per round = meters driven − 150 per collision the player caused − 25 per collision they were involved in. Causing a collision also cuts throttle for 1.5 s. Fault goes to the follower in a rear-end, to a car that cuts in sharply, and in side contacts to the car moving sideways (or drifted farther from its lane). The leaderboard ranks total points across rounds and also shows each player's best round.
+- A driver that exceeds its 28 ms budget for 30 consecutive steps coasts for the rest of the round. Runtime errors are reported back to that player.
+- Race settings: noisy lanes and vehicles, actuator variation, no assists. Players can load the same settings locally with **Practice with race settings**.
+
+The room server is a Cloudflare Worker (`worker/`) with one Durable Object per room, using hibernatable WebSockets. `npm run dev` runs it locally through `@cloudflare/vite-plugin`. It stores players, their latest source, the round state, and the leaderboard for up to 24 hours of inactivity. It enforces a 64 KB source limit, a 3 s submission interval, and a maximum of 40 players per room, and only the host token may publish round state or leaderboards.
 
 ## Project Structure
 
@@ -44,6 +56,8 @@ src/
   toolbox/     insertable helper snippets and built-in controller examples
   types/       documented public autopilot API types
   ui/          React/Tailwind controls, Monaco editor, telemetry, toolbox menus
+  multiplayer/ room protocol, host race engine and scoring, presenter and player views
+worker/        Cloudflare Worker and room Durable Object
 public/
   sandbox.html isolated browser sandbox host
 ```
@@ -74,7 +88,7 @@ Current limitations:
 
 - This browser sandbox is a defense-in-depth MVP, not a full security boundary against a determined attacker.
 - Browser memory limits cannot be precisely enforced from JavaScript.
-- Future leaderboard scoring must not trust client-reported results. The intended design is to submit code, seed, settings, and metadata, then replay and score deterministically in a controlled environment.
+- Multiplayer scoring trusts the presenter's browser, not the players' browsers. Fully server-side replay and scoring would need a controlled environment that can run untrusted code.
 
 ## Simulation Model
 
