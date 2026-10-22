@@ -28,7 +28,7 @@ interface HostUiState {
   drivers: DriverView[];
   standings: LiveStanding[];
   leaderboard: LeaderboardEntry[];
-  lastResults: { playerId: string; name: string; color: string; points: number; distance: number; atFault: number; collisions: number }[];
+  lastResults: { playerId: string; name: string; color: string; points: number; distance: number; atFault: number; collisions: number; edgeHits: number }[];
   progress: { playerId: string; name: string; color: string; distance: number }[];
 }
 
@@ -236,6 +236,7 @@ export function HostView() {
             distance: result.distance,
             atFault: result.atFaultCollisions,
             collisions: result.collisions,
+            edgeHits: result.edgeHits,
           }))
           .sort((a, b) => b.points - a.points),
         progress: standings.map(({ playerId, name, color, distance }) => ({ playerId, name, color, distance })),
@@ -286,7 +287,7 @@ export function HostView() {
                 place={index + 1}
                 color={standing.color}
                 name={standing.name}
-                detail={`${Math.round(standing.distance)} m${standing.atFaultCollisions ? ` · 💥${standing.atFaultCollisions}` : ''}${standing.benched ? ' · benched' : ''}`}
+                detail={`${Math.round(standing.distance)} m${standing.atFaultCollisions ? ` · 💥${standing.atFaultCollisions}` : ''}${standing.edgeHits ? ` · 🚧${standing.edgeHits}` : ''}${standing.benched ? ' · benched' : ''}`}
                 value={standing.points}
               />
             ))}
@@ -310,7 +311,8 @@ export function HostView() {
         </Panel>
         <div className={`px-3 py-2 text-xs font-bold ${panel}`}>
           Score = meters driven − {RACE_SCORING.atFaultPenalty} per crash you cause − {RACE_SCORING.involvedPenalty} per crash
-          you're in. Causing a crash also stalls your car for {RACE_SCORING.atFaultStallSeconds}s.
+          you're in − {RACE_SCORING.edgeHitPenalty} per road-edge hit. Causing a crash also stalls your car for{' '}
+          {RACE_SCORING.atFaultStallSeconds}s.
         </div>
       </div>
 
@@ -375,7 +377,7 @@ export function HostView() {
                   place={index + 4}
                   color={result.color}
                   name={result.name}
-                  detail={`${result.distance} m${result.atFault ? ` · 💥${result.atFault} at fault` : ''}`}
+                  detail={`${result.distance} m${result.atFault ? ` · 💥${result.atFault} at fault` : ''}${result.edgeHits ? ` · 🚧${result.edgeHits} edge` : ''}`}
                   value={result.points}
                 />
               ))}

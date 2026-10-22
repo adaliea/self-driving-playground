@@ -7,14 +7,21 @@ export const RACE_SCORING = {
   atFaultPenalty: 150,
   /** Points lost for each collision the player was involved in but did not cause. */
   involvedPenalty: 25,
+  /** Points lost each time the player's car hits the road edge. */
+  edgeHitPenalty: 40,
   /** Seconds the at-fault car coasts with no throttle after causing a collision. */
   atFaultStallSeconds: 1.5,
 } as const;
 
-export function roundPoints(state: Pick<PlayerRaceState, 'distance' | 'collisions' | 'atFaultCollisions'>): number {
+export function roundPoints(
+  state: Pick<PlayerRaceState, 'distance' | 'collisions' | 'atFaultCollisions' | 'edgeHits'>,
+): number {
   const notAtFault = Math.max(0, state.collisions - state.atFaultCollisions);
   return Math.round(
-    state.distance - state.atFaultCollisions * RACE_SCORING.atFaultPenalty - notAtFault * RACE_SCORING.involvedPenalty,
+    state.distance -
+      state.atFaultCollisions * RACE_SCORING.atFaultPenalty -
+      notAtFault * RACE_SCORING.involvedPenalty -
+      state.edgeHits * RACE_SCORING.edgeHitPenalty,
   );
 }
 
@@ -31,6 +38,7 @@ export function scoreRound(round: number, states: PlayerRaceState[]): Map<string
         distance: Math.round(state.distance),
         collisions: state.collisions,
         atFaultCollisions: state.atFaultCollisions,
+        edgeHits: state.edgeHits,
         points,
         place: index + 1,
         finishedRacers: ranked.length,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP } from './defaults';
+import { ROAD_LANE_COUNT, ROAD_LANE_WIDTH } from './road';
 import { Simulation } from './simulation';
 import type { VehicleState } from './vehicle';
 
@@ -56,6 +57,35 @@ describe('multi-player simulation', () => {
     const [frontState, backState] = simulation.getPlayerStates();
     expect(frontState).toMatchObject({ collisions: 1, atFaultCollisions: 0, stalled: false });
     expect(backState).toMatchObject({ collisions: 1, atFaultCollisions: 1, stalled: true });
+  });
+
+  it('counts one edge hit per touch of the road edge and re-arms after pulling away', () => {
+    const settings = { ...DEFAULT_SETTINGS, trafficDensity: 0, steerAssist: false, accelerateAssist: false };
+    const simulation = new Simulation(settings, { players: players.slice(0, 1) });
+    const [car] = (simulation as unknown as SimulationInternals).vehicles.filter((vehicle) => vehicle.kind === 'ego');
+    const drive = (steering: number, seconds: number) => {
+      for (let step = 0; step < Math.round(seconds / FIXED_TIMESTEP); step += 1) {
+        simulation.createPlayerInput('p1', settings, FIXED_TIMESTEP);
+        simulation.stepPlayers(FIXED_TIMESTEP, new Map([['p1', { motor: 0.6, steering }]]), settings);
+      }
+    };
+
+    drive(0, 1);
+    expect(simulation.getPlayerStates()[0].edgeHits).toBe(0);
+
+    // Steer hard into the edge and keep scraping along it: still a single hit.
+    drive(1, 4);
+    const edgeLimit = (ROAD_LANE_COUNT * ROAD_LANE_WIDTH) / 2 - car.width / 2 - 0.03;
+    expect(Math.abs(car.lateral)).toBeGreaterThan(edgeLimit - 0.1);
+    expect(simulation.getPlayerStates()[0].edgeHits).toBe(1);
+
+    // Back in the middle of the road, clear of the edge, then hit the same edge again.
+    car.lateral = 0;
+    car.headingOffset = 0;
+    drive(0, 0.2);
+    expect(Math.abs(car.lateral)).toBeLessThan(edgeLimit - 0.3);
+    drive(1, 4);
+    expect(simulation.getPlayerStates()[0].edgeHits).toBe(2);
   });
 
   it('blames the vehicle moving sideways in a sideswipe', () => {

@@ -28,6 +28,10 @@ export interface VehicleState {
   commandSteering: number;
   laneChangeCooldown: number;
   collision: boolean;
+  /** Set by physics: the body was pushed back from the road edge on the latest step. */
+  edgeContact?: boolean;
+  /** Traffic only: 0-1 fade on in-lane weaving, held at 0 during lane changes. */
+  weaveBlend?: number;
   personality?: TrafficPersonalityInstance;
 }
 

@@ -57,51 +57,54 @@ export function sanitizeAutopilotOutput(rawOutput: unknown): SanitizedAutopilotO
   };
 }
 
-export function builtInLaneCentering(vehicle: VehicleState, road: Road, targetLane = vehicle.targetLane): number {
+/**
+ * Traffic steering toward a lane center. `laneOffset` shifts the target sideways
+ * (positive = right), e.g. for a driver wandering within its lane.
+ */
+export function builtInLaneCentering(
+  vehicle: VehicleState,
+  road: Road,
+  targetLane = vehicle.targetLane,
+  laneOffset = 0,
+): number {
   const personality = vehicle.personality ?? DEFAULT_TRAFFIC_PERSONALITY;
-  const laneControlModel = vehicle.personality?.laneControlModel ?? 'lateralVelocity';
-  const desiredLateral = road.getLaneCenterOffset(targetLane);
-  const rawLateralError = desiredLateral - vehicle.lateral;
+  const laneCenter = road.getLaneCenterOffset(targetLane);
+  const laneError = laneCenter - vehicle.lateral;
+  const rawLateralError = laneError + laneOffset;
   const targetLaneMismatch = targetLane !== vehicle.laneIndex;
   const isChangingLanes = targetLaneMismatch && vehicle.laneChangeCooldown > 0;
+  // Recovery is judged against the lane itself, except for drivers allowed to drift over its lines:
+  // they recover when far from where they're drifting to, or when near the road edge.
+  const recoveryError = vehicle.personality?.laneDrifter ? rawLateralError : laneError;
+  const nearRoadEdge = Math.abs(vehicle.lateral) + vehicle.width / 2 > road.getRoadHalfWidth() - LANE_BODY_RECOVERY_MARGIN;
   const assignedLaneRecovery =
-    Math.abs(rawLateralError) + vehicle.width / 2 > road.laneWidth / 2 - LANE_BODY_RECOVERY_MARGIN;
+    nearRoadEdge || Math.abs(recoveryError) + vehicle.width / 2 > road.laneWidth / 2 - LANE_BODY_RECOVERY_MARGIN;
   const laneExitRecovery = assignedLaneRecovery && !isChangingLanes;
   const bodyOutsideRoad = Math.abs(vehicle.lateral) + vehicle.width / 2 > road.getRoadHalfWidth();
-  const lateralLimit = bodyOutsideRoad ? 4.1 : laneExitRecovery ? 3.2 : isChangingLanes ? 1.45 : 2.15;
-  const lateralError = clamp(rawLateralError, -lateralLimit, lateralLimit);
-  const headingError = vehicle.headingOffset;
   const previewDistance = clamp(vehicle.speed * 0.85, 14, 34);
   const previewCurvature = road.sampleAt(vehicle.s + previewDistance).curvature;
   const steeringScale = clamp(vehicle.speed / 22, 0.08, 1);
   const curvatureFeedforward = (previewCurvature * vehicle.speed) / Math.max(0.08, 0.68 * steeringScale);
 
-  if (laneControlModel === 'lateralVelocity') {
-    const maxLateralVelocity = bodyOutsideRoad
-      ? 2.3
-      : laneExitRecovery
-      ? 2.15
-      : isChangingLanes
-      ? personality.laneChangeMaxLateralVelocity
-      : 0.82;
-    const desiredLateralVelocity = clamp(
-      rawLateralError * (laneExitRecovery ? 0.92 : isChangingLanes ? 0.78 : 0.58),
-      -maxLateralVelocity,
-      maxLateralVelocity,
-    );
-    const actualLateralVelocity = vehicle.speed * Math.sin(vehicle.headingOffset);
-    const headingLimit = laneExitRecovery ? 0.38 : 0.32;
-    const desiredHeading = Math.asin(clamp(desiredLateralVelocity / Math.max(1, vehicle.speed), -headingLimit, headingLimit));
-    const headingCorrection =
-      (desiredHeading - vehicle.headingOffset) * (personality.headingGain + (laneExitRecovery ? 0.42 : 0.24));
-    const velocityCorrection = (desiredLateralVelocity - actualLateralVelocity) * (laneExitRecovery ? 0.11 : 0.075);
-    return clamp(headingCorrection + velocityCorrection + curvatureFeedforward * (laneExitRecovery ? 0.72 : 1), -1, 1);
-  }
-
-  const laneChangeSteeringLimit = clamp(0.16 + personality.laneChangeMaxLateralVelocity * 0.12, 0.25, 0.42);
-  const lateralSteeringLimit = bodyOutsideRoad ? 0.55 : laneExitRecovery ? 0.48 : isChangingLanes ? laneChangeSteeringLimit : 0.24;
-  const lateralSteering = clamp(lateralError * personality.steeringGain, -lateralSteeringLimit, lateralSteeringLimit);
-  return clamp(lateralSteering - headingError * personality.headingGain + curvatureFeedforward * (laneExitRecovery ? 0.72 : 1), -1, 1);
+  const maxLateralVelocity = bodyOutsideRoad
+    ? 2.3
+    : laneExitRecovery
+    ? 2.15
+    : isChangingLanes
+    ? personality.laneChangeMaxLateralVelocity
+    : 0.82;
+  const desiredLateralVelocity = clamp(
+    rawLateralError * (laneExitRecovery ? 0.92 : isChangingLanes ? 0.78 : 0.58),
+    -maxLateralVelocity,
+    maxLateralVelocity,
+  );
+  const actualLateralVelocity = vehicle.speed * Math.sin(vehicle.headingOffset);
+  const headingLimit = laneExitRecovery ? 0.38 : 0.32;
+  const desiredHeading = Math.asin(clamp(desiredLateralVelocity / Math.max(1, vehicle.speed), -headingLimit, headingLimit));
+  const headingCorrection =
+    (desiredHeading - vehicle.headingOffset) * (personality.headingGain + (laneExitRecovery ? 0.42 : 0.24));
+  const velocityCorrection = (desiredLateralVelocity - actualLateralVelocity) * (laneExitRecovery ? 0.11 : 0.075);
+  return clamp(headingCorrection + velocityCorrection + curvatureFeedforward * (laneExitRecovery ? 0.72 : 1), -1, 1);
 }
 
 export function builtInAssistLaneKeeping(input: AutopilotInput): number {

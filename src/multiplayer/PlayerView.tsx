@@ -259,7 +259,7 @@ function RaceBar({
             <span className="text-muted-foreground">
               {entry.totalPoints} pts
               {entry.lastRound
-                ? ` · last round ${entry.lastRound.points} (${entry.lastRound.distance} m, ${entry.lastRound.atFaultCollisions} at fault, place ${entry.lastRound.place}/${entry.lastRound.finishedRacers})`
+                ? ` · last round ${entry.lastRound.points} (${entry.lastRound.distance} m, ${entry.lastRound.atFaultCollisions} at fault, ${entry.lastRound.edgeHits} edge hits, place ${entry.lastRound.place}/${entry.lastRound.finishedRacers})`
                 : ''}
             </span>
           </div>
@@ -277,9 +277,17 @@ function RaceBar({
           <Button
             type="button"
             size="sm"
-            disabled={!connected || !context.codeReady || unchanged}
+            disabled={!connected || !context.codeReady || context.assistsOn || unchanged}
             onClick={() => onSubmit(context.code)}
-            title={!context.codeReady ? 'Fix compile errors first' : unchanged ? 'This exact code is already submitted' : undefined}
+            title={
+              !context.codeReady
+                ? 'Fix compile errors first'
+                : context.assistsOn
+                  ? 'Turn off steer and accelerate assist first: races run without them'
+                  : unchanged
+                    ? 'This exact code is already submitted'
+                    : undefined
+            }
           >
             <Send />
             {unchanged ? `Submitted v${state.submittedVersion}` : state.submittedVersion ? 'Submit new version' : 'Submit to race'}
@@ -290,6 +298,19 @@ function RaceBar({
         </div>
       </div>
 
+      {context.assistsOn ? (
+        <div className="mt-1 text-xs text-amber-400">
+          Assists are on, so your code isn't fully driving. Races run with assists off: turn them off (or use{' '}
+          <button
+            type="button"
+            className="underline underline-offset-4"
+            onClick={() => context.applySettings(raceSettings(0, DEFAULT_RACE_CONFIG.trafficDensity))}
+          >
+            race settings
+          </button>
+          ) and test before submitting.
+        </div>
+      ) : null}
       {state.connection === 'unreachable' ? (
         <div className="mt-1 text-xs text-red-400">
           Can't reach room {session.roomCode}. It may have closed. Leave and join the presenter's current code.
@@ -312,7 +333,7 @@ function RaceBar({
       ) : null}
       <div className="mt-1 text-[11px] text-muted-foreground">
         Score: meters driven − {RACE_SCORING.atFaultPenalty} per crash you cause − {RACE_SCORING.involvedPenalty} per crash you are
-        in. Your latest submitted version keeps racing until you submit another.
+        in − {RACE_SCORING.edgeHitPenalty} per road-edge hit. Your latest submitted version keeps racing until you submit another.
       </div>
     </div>
   );

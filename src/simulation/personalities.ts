@@ -2,7 +2,6 @@ import { clamp } from './math';
 import type { SeededRandom } from './random';
 
 export type TrafficPersonalityId = 'cautious' | 'commuter' | 'assertive' | 'tailgater' | 'truck' | 'distracted';
-export type LaneControlModel = 'clampedLateral' | 'lateralVelocity';
 
 export interface TrafficPersonality {
   id: TrafficPersonalityId;
@@ -23,15 +22,25 @@ export interface TrafficPersonality {
   gapGain: number;
   brakeGain: number;
   feedforwardWeight: number;
-  steeringGain: number;
   headingGain: number;
-  lateralVelocityShare: number;
+  /**
+   * Peak meters the driver wanders from its lane center while holding a lane.
+   * Capped per vehicle so the body stays inside the lane, which also keeps it off the road edge.
+   */
+  weaveAmplitude: number;
+  /** Seconds for one slow side-to-side wander. */
+  weavePeriod: number;
+  /** Share of these drivers who wander wide enough to drift over the lane line into an open adjacent lane. */
+  laneDriftShare: number;
   color: string;
 }
 
 export interface TrafficPersonalityInstance extends TrafficPersonality {
   variation: number;
-  laneControlModel: LaneControlModel;
+  /** Random phase so weaving cars don't move in step, in radians. */
+  weavePhase: number;
+  /** Drifts partway into an adjacent lane when it is clear. Never toward the road edge. */
+  laneDrifter: boolean;
 }
 
 const PERSONALITIES: TrafficPersonality[] = [
@@ -54,9 +63,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     gapGain: 0.22,
     brakeGain: 0.075,
     feedforwardWeight: 0.75,
-    steeringGain: 0.24,
     headingGain: 0.82,
-    lateralVelocityShare: 0.2,
+    weaveAmplitude: 0.06,
+    weavePeriod: 9,
+    laneDriftShare: 0,
     color: '#d7dde3',
   },
   {
@@ -78,9 +88,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     gapGain: 0.34,
     brakeGain: 0.095,
     feedforwardWeight: 0.9,
-    steeringGain: 0.28,
     headingGain: 0.88,
-    lateralVelocityShare: 0.38,
+    weaveAmplitude: 0.1,
+    weavePeriod: 8,
+    laneDriftShare: 0,
     color: '#a9bed0',
   },
   {
@@ -102,9 +113,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     gapGain: 0.42,
     brakeGain: 0.11,
     feedforwardWeight: 1,
-    steeringGain: 0.32,
     headingGain: 0.98,
-    lateralVelocityShare: 0.5,
+    weaveAmplitude: 0.14,
+    weavePeriod: 6.5,
+    laneDriftShare: 0,
     color: '#8ea6ff',
   },
   {
@@ -126,9 +138,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     gapGain: 0.42,
     brakeGain: 0.13,
     feedforwardWeight: 1,
-    steeringGain: 0.26,
     headingGain: 1,
-    lateralVelocityShare: 0.5,
+    weaveAmplitude: 0.16,
+    weavePeriod: 6,
+    laneDriftShare: 0,
     color: '#f0b56a',
   },
   {
@@ -150,9 +163,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     gapGain: 0.2,
     brakeGain: 0.08,
     feedforwardWeight: 0.68,
-    steeringGain: 0.2,
     headingGain: 0.72,
-    lateralVelocityShare: 0.12,
+    weaveAmplitude: 0.08,
+    weavePeriod: 11,
+    laneDriftShare: 0,
     color: '#82dec1',
   },
   {
@@ -174,9 +188,10 @@ const PERSONALITIES: TrafficPersonality[] = [
     gapGain: 0.26,
     brakeGain: 0.07,
     feedforwardWeight: 0.78,
-    steeringGain: 0.22,
     headingGain: 0.78,
-    lateralVelocityShare: 0.28,
+    weaveAmplitude: 0.42,
+    weavePeriod: 5.5,
+    laneDriftShare: 0.4,
     color: '#c9b4ff',
   },
 ];
@@ -207,9 +222,11 @@ export function createTrafficPersonality(rng: SeededRandom, density: number): Tr
     speedGain: clamp(profile.speedGain * responseScale, 0.035, 0.14),
     gapGain: clamp(profile.gapGain * responseScale, 0.16, 0.58),
     brakeGain: clamp(profile.brakeGain * responseScale, 0.045, 0.16),
-    steeringGain: clamp(profile.steeringGain * steeringScale, 0.16, 0.34),
     headingGain: clamp(profile.headingGain * steeringScale, 0.58, 1.1),
-    laneControlModel: rng.chance(profile.lateralVelocityShare) ? 'lateralVelocity' : 'clampedLateral',
+    weaveAmplitude: Math.max(0, profile.weaveAmplitude * (1 + variation * 0.25)),
+    weavePeriod: profile.weavePeriod * rng.range(0.85, 1.15),
+    weavePhase: rng.range(0, Math.PI * 2),
+    laneDrifter: rng.chance(profile.laneDriftShare),
     variation,
   };
 }

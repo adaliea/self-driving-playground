@@ -3,8 +3,8 @@ import type { PlayerRaceState } from '../simulation';
 import { parseHostMessage, sanitizePlayerName } from './protocol';
 import { RACE_SCORING, applyRoundResults, roundPoints, scoreRound } from './scoring';
 
-function state(id: string, distance: number, collisions = 0, atFaultCollisions = 0): PlayerRaceState {
-  return { id, distance, s: distance, speed: 20, laneIndex: 1, collisions, atFaultCollisions, stalled: false };
+function state(id: string, distance: number, collisions = 0, atFaultCollisions = 0, edgeHits = 0): PlayerRaceState {
+  return { id, distance, s: distance, speed: 20, laneIndex: 1, collisions, atFaultCollisions, edgeHits, stalled: false };
 }
 
 describe('race scoring', () => {
@@ -13,6 +13,15 @@ describe('race scoring', () => {
     expect(roundPoints(state('a', 1000, 1, 1))).toBe(1000 - RACE_SCORING.atFaultPenalty);
     expect(roundPoints(state('a', 1000, 1, 0))).toBe(1000 - RACE_SCORING.involvedPenalty);
     expect(RACE_SCORING.atFaultPenalty).toBeGreaterThan(RACE_SCORING.involvedPenalty * 4);
+  });
+
+  it('penalizes each road-edge hit, less than causing a crash', () => {
+    expect(roundPoints(state('a', 1000, 0, 0, 2))).toBe(1000 - 2 * RACE_SCORING.edgeHitPenalty);
+    expect(roundPoints(state('a', 1000, 1, 1, 1))).toBe(1000 - RACE_SCORING.atFaultPenalty - RACE_SCORING.edgeHitPenalty);
+    expect(RACE_SCORING.edgeHitPenalty).toBeLessThan(RACE_SCORING.atFaultPenalty);
+    const results = scoreRound(1, [state('wall', 1050, 0, 0, 3), state('clean', 1000)]);
+    expect(results.get('clean')).toMatchObject({ place: 1 });
+    expect(results.get('wall')).toMatchObject({ place: 2, edgeHits: 3 });
   });
 
   it('ranks a careful driver above a faster driver who caused crashes', () => {
@@ -38,6 +47,15 @@ describe('room protocol validation', () => {
     expect(sanitizePlayerName('  Ada‮\u0000  Lovelace ')).toBe('Ada Lovelace');
     expect(sanitizePlayerName('​')).toBeUndefined();
     expect(sanitizePlayerName('x'.repeat(100))).toHaveLength(24);
+  });
+
+  it('defaults edge hits for round results from hosts that predate them', () => {
+    const lastRound = { round: 1, distance: 900, collisions: 0, atFaultCollisions: 0, points: 900, place: 1, finishedRacers: 1 };
+    const message = parseHostMessage({
+      type: 'leaderboard',
+      entries: [{ playerId: 'a', name: 'A', totalPoints: 900, bestRoundPoints: 900, roundsRaced: 1, totalAtFault: 0, lastRound }],
+    });
+    expect(message).toMatchObject({ entries: [{ lastRound: { edgeHits: 0 } }] });
   });
 
   it('rejects malformed host messages', () => {

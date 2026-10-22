@@ -60,6 +60,7 @@ export interface LiveStanding {
   points: number;
   collisions: number;
   atFaultCollisions: number;
+  edgeHits: number;
   stalled: boolean;
   benched: boolean;
 }
@@ -231,6 +232,7 @@ export class RaceEngine {
           points: roundPoints(state),
           collisions: state.collisions,
           atFaultCollisions: state.atFaultCollisions,
+          edgeHits: state.edgeHits,
           stalled: state.stalled,
           benched: racer.benched,
         };

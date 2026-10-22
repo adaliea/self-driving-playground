@@ -8,7 +8,7 @@ import {
   sanitizeAutopilotOutput,
   trafficAutopilot,
 } from './controllers';
-import { applyVehiclePhysics } from './physics';
+import { applyVehiclePhysics, roadEdgeLimit } from './physics';
 import { Road } from './road';
 import { SeededRandom } from './random';
 import { SensorSimulator } from './sensors';
@@ -33,6 +33,24 @@ const COLLISION_FEEDBACK_DURATION = 0.95;
 const COLLISION_EVENT_COOLDOWN = 0.7;
 const COLLISION_REPEAT_IMPACT_SPEED = 0.04;
 const COLLISION_CONTACT_VISUAL_HOLD = 0.18;
+// After an edge hit, a player must pull this far back from the edge before touching it again counts as a new hit.
+const EDGE_HIT_REARM_DISTANCE = 0.3;
+// Weaving keeps this much space between the body and the lane lines.
+const WEAVE_LANE_MARGIN = 0.2;
+// In an outer lane, weaving toward the road edge keeps this much more space, since curves add tracking error.
+const WEAVE_EDGE_MARGIN = 0.5;
+// Per second: weaving fades in slowly after a lane change and drops out quickly when one starts.
+// Lane drifters wander this far (peak meters) and can put this much of their body over the lane line.
+const LANE_DRIFT_AMPLITUDE = 1.1;
+const LANE_DRIFT_OVER_LINE = 0.5;
+// Drifters wander this much slower than their personality's weave period.
+const LANE_DRIFT_PERIOD_SCALE = 1.5;
+// A drifter only crosses into an adjacent lane with no vehicle within this many meters along the road,
+// plus extra for the speed difference.
+const LANE_DRIFT_CLEAR_DISTANCE = 18;
+const LANE_DRIFT_CLEAR_SECONDS = 1.5;
+const WEAVE_FADE_IN_RATE = 0.35;
+const WEAVE_FADE_OUT_RATE = 2;
 const FAULT_LATERAL_SPEED_THRESHOLD = 0.35;
 const CUT_IN_LATERAL_SPEED_THRESHOLD = 0.8;
 const DEFAULT_PLAYER: SimulationPlayer = { id: EGO_ID, color: '#f7fffb' };
@@ -77,6 +95,8 @@ export interface PlayerRaceState {
   laneIndex: number;
   collisions: number;
   atFaultCollisions: number;
+  /** Separate times the player's car hit the road edge. */
+  edgeHits: number;
   stalled: boolean;
 }
 
@@ -88,6 +108,9 @@ interface PlayerRuntime {
   lastUserOutput: SanitizedAutopilotOutput;
   collisions: number;
   atFaultCollisions: number;
+  edgeHits: number;
+  /** False after an edge hit until the car pulls back from the edge. */
+  edgeHitArmed: boolean;
   stallUntil: number;
 }
 
@@ -106,8 +129,9 @@ export interface SimulationVehicleDebug {
   actualSteering: number;
   commandSteering: number;
   collision: boolean;
+  edgeContact: boolean;
   personality?: string;
-  laneControlModel?: string;
+  laneDrifter: boolean;
 }
 
 export interface SimulationDebugState {
@@ -211,6 +235,8 @@ export class Simulation {
         lastUserOutput: { motor: 0, steering: 0, invalidFields: [] },
         collisions: 0,
         atFaultCollisions: 0,
+        edgeHits: 0,
+        edgeHitArmed: true,
         stallUntil: 0,
       });
     });
@@ -261,6 +287,7 @@ export class Simulation {
       };
 
       applyVehiclePhysics(ego, this.road, finalOutput, dt, this.rng, settings.actuatorVariation);
+      this.trackEdgeHit(runtime, ego);
       ego.targetLane = ego.laneIndex;
       ego.settledLane = this.settledLaneOf(ego);
       runtime.lastUserOutput = user;
@@ -286,7 +313,7 @@ export class Simulation {
       vehicle.targetLane = clamp(Math.round(trafficRaw.targetLane), 0, this.road.laneCount - 1);
       const finalTraffic = {
         ...traffic,
-        steering: builtInLaneCentering(vehicle, this.road, vehicle.targetLane),
+        steering: builtInLaneCentering(vehicle, this.road, vehicle.targetLane, this.trafficWeaveOffset(vehicle, dt)),
       };
       applyVehiclePhysics(vehicle, this.road, finalTraffic, dt, this.rng, settings.actuatorVariation);
     }
@@ -407,6 +434,7 @@ export class Simulation {
         laneIndex: vehicle.laneIndex,
         collisions: runtime.collisions,
         atFaultCollisions: runtime.atFaultCollisions,
+        edgeHits: runtime.edgeHits,
         stalled: runtime.stallUntil > this.time,
       };
     });
@@ -448,8 +476,9 @@ export class Simulation {
         actualSteering: vehicle.actualSteering,
         commandSteering: vehicle.commandSteering,
         collision: vehicle.collision,
+        edgeContact: vehicle.edgeContact ?? false,
         personality: vehicle.personality?.label,
-        laneControlModel: vehicle.personality?.laneControlModel,
+        laneDrifter: vehicle.personality?.laneDrifter ?? false,
       })),
     };
   }
@@ -590,6 +619,58 @@ export class Simulation {
       collision: false,
       personality,
     };
+  }
+
+  /** Sideways offset from lane center a traffic driver is wandering toward, positive = right. */
+  private trafficWeaveOffset(vehicle: VehicleState, dt: number): number {
+    const personality = vehicle.personality;
+    if (!personality || personality.weaveAmplitude <= 0) return 0;
+
+    const holdingLane = vehicle.targetLane === vehicle.laneIndex;
+    const blend = vehicle.weaveBlend ?? 0;
+    vehicle.weaveBlend = holdingLane
+      ? Math.min(1, blend + WEAVE_FADE_IN_RATE * dt)
+      : Math.max(0, blend - WEAVE_FADE_OUT_RATE * dt);
+    if (vehicle.weaveBlend === 0) return 0;
+
+    const drifter = personality.laneDrifter;
+    const period = personality.weavePeriod * (drifter ? LANE_DRIFT_PERIOD_SCALE : 1);
+    // Two incommensurate sines so the wander doesn't look like a metronome. Their weights sum to 1.
+    const phase = (this.time / period) * Math.PI * 2 + personality.weavePhase;
+    const wander = 0.7 * Math.sin(phase) + 0.3 * Math.sin(phase * 2.17 + personality.weavePhase * 1.3);
+    const offset = (drifter ? LANE_DRIFT_AMPLITUDE : personality.weaveAmplitude) * wander;
+
+    const laneRoom = this.road.laneWidth / 2 - vehicle.width / 2;
+    const side = offset < 0 ? -1 : 1;
+    const neighborLane = vehicle.targetLane + side;
+    const maxOffset =
+      neighborLane < 0 || neighborLane >= this.road.laneCount
+        ? laneRoom - WEAVE_EDGE_MARGIN
+        : drifter && this.isDriftClear(vehicle, neighborLane)
+          ? laneRoom + LANE_DRIFT_OVER_LINE
+          : laneRoom - WEAVE_LANE_MARGIN;
+    return side * Math.min(Math.abs(offset), Math.max(0, maxOffset)) * vehicle.weaveBlend;
+  }
+
+  /** True when no other vehicle is in or entering `lane` near `vehicle`. */
+  private isDriftClear(vehicle: VehicleState, lane: number): boolean {
+    const laneCenter = this.road.getLaneCenterOffset(lane);
+    for (const other of this.vehicles) {
+      // Skip vehicles whose body can't reach the strip of the lane the drifter would cross into.
+      if (other === vehicle || Math.abs(other.lateral - laneCenter) > this.road.laneWidth * 0.75) continue;
+      const clearDistance = LANE_DRIFT_CLEAR_DISTANCE + Math.abs(other.speed - vehicle.speed) * LANE_DRIFT_CLEAR_SECONDS;
+      if (Math.abs(other.s - vehicle.s) < clearDistance) return false;
+    }
+    return true;
+  }
+
+  private trackEdgeHit(runtime: PlayerRuntime, vehicle: VehicleState): void {
+    if (vehicle.edgeContact) {
+      if (runtime.edgeHitArmed) runtime.edgeHits += 1;
+      runtime.edgeHitArmed = false;
+    } else if (roadEdgeLimit(vehicle, this.road) - Math.abs(vehicle.lateral) >= EDGE_HIT_REARM_DISTANCE) {
+      runtime.edgeHitArmed = true;
+    }
   }
 
   private resolveCloseVehicles(): void {

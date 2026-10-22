@@ -37,6 +37,8 @@ export interface AppTopBarContext {
   code: string;
   /** True when the current editor code compiled and loaded into the local runner. */
   codeReady: boolean;
+  /** True while steer or accelerate assist is overriding the code locally. */
+  assistsOn: boolean;
   applySettings: (settings: Partial<PlaygroundSettings>) => void;
 }
 
@@ -354,6 +356,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
       {renderTopBar?.({
         code,
         codeReady: codeStatus === 'Code loaded' && compileErrors.length === 0,
+        assistsOn: settings.steerAssist || settings.accelerateAssist,
         applySettings: (patch) => {
           const next = { ...settingsRef.current, ...patch };
           updateSettings(next);

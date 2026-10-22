@@ -36,6 +36,7 @@ export interface RoundResult {
   distance: number;
   collisions: number;
   atFaultCollisions: number;
+  edgeHits: number;
   points: number;
   place: number;
   finishedRacers: number;
@@ -197,7 +198,10 @@ function parseRoundResult(value: unknown): RoundResult | undefined {
   if (!isRecord(value)) return undefined;
   const fields = ['round', 'distance', 'collisions', 'atFaultCollisions', 'points', 'place', 'finishedRacers'] as const;
   if (!fields.every((field) => isFiniteNumber(value[field]))) return undefined;
-  return Object.fromEntries(fields.map((field) => [field, value[field]])) as unknown as RoundResult;
+  return {
+    ...(Object.fromEntries(fields.map((field) => [field, value[field]])) as Omit<RoundResult, 'edgeHits'>),
+    edgeHits: isFiniteNumber(value.edgeHits) ? value.edgeHits : 0,
+  };
 }
 
 function parseLeaderboardEntry(value: unknown): LeaderboardEntry | undefined {

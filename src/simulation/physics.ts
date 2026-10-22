@@ -10,6 +10,11 @@ const TOP_SPEED = 58;
 const MOTOR_TAU = 0.22;
 const STEERING_TAU = 0.14;
 
+/** Furthest lateral offset the vehicle's center can reach before its body touches the road edge. */
+export function roadEdgeLimit(vehicle: Pick<VehicleState, 'width'>, road: Road): number {
+  return Math.max(0.1, road.getRoadHalfWidth() - vehicle.width / 2 - 0.03);
+}
+
 export function applyVehiclePhysics(
   vehicle: VehicleState,
   road: Road,
@@ -51,7 +56,8 @@ export function applyVehiclePhysics(
   vehicle.lateral += lateralDelta;
   vehicle.headingOffset = normalizeAngle(vehicle.headingOffset + yawRate * dt - roadSample.curvature * forwardDelta);
 
-  const roadLimit = Math.max(0.1, road.getRoadHalfWidth() - vehicle.width / 2 - 0.03);
+  const roadLimit = roadEdgeLimit(vehicle, road);
+  vehicle.edgeContact = Math.abs(vehicle.lateral) > roadLimit;
   if (vehicle.lateral < -roadLimit) {
     vehicle.lateral = -roadLimit;
     vehicle.headingOffset = Math.max(vehicle.headingOffset, 0.03);

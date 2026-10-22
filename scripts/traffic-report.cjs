@@ -36,6 +36,8 @@ const noisyLaneLines = booleanArg(args['noisy-lanes'] ?? args.noisyLaneLines ?? 
 const noisyVehicles = booleanArg(args['noisy-vehicles'] ?? args.noisyVehicles ?? args.noisy, false);
 const actuatorVariation = booleanArg(args['actuator-variation'] ?? args.actuatorVariation, false);
 const json = Boolean(args.json);
+// Matches EDGE_HIT_REARM_DISTANCE in src/simulation/simulation.ts.
+const EDGE_HIT_REARM_DISTANCE = 0.3;
 
 const reports = [];
 for (let run = 0; run < runs; run += 1) {
@@ -71,6 +73,18 @@ function runScenario(seed, trafficDensity, durationSeconds, warmupSeconds, egoSt
   const previousSample = new Map();
   const passEvents = [];
   const samples = [];
+  const edge = {
+    trafficContactSteps: 0,
+    trafficSteps: 0,
+    egoContactSteps: 0,
+    egoSteps: 0,
+    egoHitsAtWarmup: 0,
+    trafficHits: 0,
+    hitsByPersonality: new Map(),
+    stepsByPersonality: new Map(),
+    hitDuringLaneChange: 0,
+    armed: new Map(),
+  };
 
   for (let step = 0; step < steps; step += 1) {
     const input = simulation.createEgoInput(settings, FIXED_TIMESTEP);
@@ -78,6 +92,33 @@ function runScenario(seed, trafficDensity, durationSeconds, warmupSeconds, egoSt
     const state = simulation.getDebugState();
     const ego = state.vehicles.find((vehicle) => vehicle.kind === 'ego');
     if (!ego) throw new Error('Missing ego vehicle in debug state.');
+
+    if (step === warmupSteps) edge.egoHitsAtWarmup = simulation.getPlayerStates()[0].edgeHits;
+    if (step >= warmupSteps) {
+      for (const vehicle of state.vehicles) {
+        if (vehicle.kind === 'ego') {
+          edge.egoSteps += 1;
+          if (vehicle.edgeContact) edge.egoContactSteps += 1;
+        } else {
+          const label = vehicle.personality ?? 'Unknown';
+          edge.trafficSteps += 1;
+          edge.stepsByPersonality.set(label, (edge.stepsByPersonality.get(label) ?? 0) + 1);
+          if (vehicle.edgeContact) edge.trafficContactSteps += 1;
+          // Same hysteresis as player edge hits: a new hit needs the car to pull back from the edge first.
+          const armed = edge.armed.get(vehicle.id) ?? true;
+          if (vehicle.edgeContact) {
+            if (armed) {
+              edge.trafficHits += 1;
+              edge.hitsByPersonality.set(label, (edge.hitsByPersonality.get(label) ?? 0) + 1);
+              if (vehicle.laneIndex !== vehicle.targetLane) edge.hitDuringLaneChange += 1;
+            }
+            edge.armed.set(vehicle.id, false);
+          } else if (edgeClearance(vehicle) >= EDGE_HIT_REARM_DISTANCE) {
+            edge.armed.set(vehicle.id, true);
+          }
+        }
+      }
+    }
 
     for (const vehicle of state.vehicles) {
       if (vehicle.kind !== 'traffic') continue;
@@ -114,7 +155,21 @@ function runScenario(seed, trafficDensity, durationSeconds, warmupSeconds, egoSt
     }
   }
 
-  return finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneChanges, hardBrakes);
+  const edgeSummary = {
+    egoEdgeHits: simulation.getPlayerStates()[0].edgeHits - edge.egoHitsAtWarmup,
+    egoEdgeContactPct: (edge.egoContactSteps / Math.max(1, edge.egoSteps)) * 100,
+    trafficEdgeContactPct: (edge.trafficContactSteps / Math.max(1, edge.trafficSteps)) * 100,
+    trafficEdgeHits: edge.trafficHits,
+    trafficEdgeHitsPerVehicleHour: edge.trafficHits / Math.max(1e-9, (edge.trafficSteps * FIXED_TIMESTEP) / 3600),
+    trafficEdgeHitsDuringLaneChange: edge.hitDuringLaneChange,
+    edgeHitsByPersonality: Object.fromEntries(
+      [...edge.stepsByPersonality.entries()].map(([label, steps]) => {
+        const hits = edge.hitsByPersonality.get(label) ?? 0;
+        return [label, { hits, perVehicleHour: hits / Math.max(1e-9, (steps * FIXED_TIMESTEP) / 3600) }];
+      }),
+    ),
+  };
+  return { ...finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneChanges, hardBrakes), ...edgeSummary };
 }
 
 function sampleState(state, previousSample) {
@@ -123,8 +178,8 @@ function sampleState(state, previousSample) {
   const speeds = traffic.map((vehicle) => vehicle.speed);
   const gaps = [];
   const byPersonality = new Map();
-  const byModel = new Map();
   const laneKeeping = createLaneKeepingAccumulator();
+  const drifterLaneKeeping = createLaneKeepingAccumulator();
   const egoLaneKeeping = createLaneKeepingAccumulator();
   const sortedTraffic = [...traffic].sort((a, b) => a.s - b.s);
 
@@ -150,15 +205,9 @@ function sampleState(state, previousSample) {
     bucket.count += 1;
     bucket.speedSum += vehicle.speed;
     addLaneKeepingSample(bucket.laneKeeping, vehicle, previousSample.get(vehicle.id));
-    addLaneKeepingSample(laneKeeping, vehicle, previousSample.get(vehicle.id));
+    // Drifters cross lane lines on purpose, so keep them out of the lane-keeping totals.
+    addLaneKeepingSample(vehicle.laneDrifter ? drifterLaneKeeping : laneKeeping, vehicle, previousSample.get(vehicle.id));
     byPersonality.set(key, bucket);
-
-    const modelKey = laneModelLabel(vehicle.laneControlModel);
-    const modelBucket = byModel.get(modelKey) ?? { count: 0, speedSum: 0, laneKeeping: createLaneKeepingAccumulator() };
-    modelBucket.count += 1;
-    modelBucket.speedSum += vehicle.speed;
-    addLaneKeepingSample(modelBucket.laneKeeping, vehicle, previousSample.get(vehicle.id));
-    byModel.set(modelKey, modelBucket);
   }
 
   if (ego) {
@@ -175,15 +224,15 @@ function sampleState(state, previousSample) {
     gapMin: gaps.length ? Math.min(...gaps) : 0,
     stoppedFraction: speeds.length ? speeds.filter((speed) => speed < 5).length / speeds.length : 0,
     laneKeeping,
+    drifterLaneKeeping,
+    drifterCount: traffic.filter((vehicle) => vehicle.laneDrifter).length,
     egoLaneKeeping,
     byPersonality,
-    byModel,
   };
 }
 
 function finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneChanges, hardBrakes) {
   const personality = new Map();
-  const model = new Map();
   for (const sample of samples) {
     for (const [label, bucket] of sample.byPersonality.entries()) {
       const current = personality.get(label) ?? {
@@ -198,20 +247,6 @@ function finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneCh
       mergeLaneKeeping(current.laneKeeping, bucket.laneKeeping);
       personality.set(label, current);
     }
-
-    for (const [label, bucket] of sample.byModel.entries()) {
-      const current = model.get(label) ?? {
-        samples: 0,
-        countSum: 0,
-        speedSum: 0,
-        laneKeeping: createLaneKeepingAccumulator(),
-      };
-      current.samples += 1;
-      current.countSum += bucket.count;
-      current.speedSum += bucket.speedSum / Math.max(1, bucket.count);
-      mergeLaneKeeping(current.laneKeeping, bucket.laneKeeping);
-      model.set(label, current);
-    }
   }
 
   const personalitySummary = [...personality.entries()]
@@ -225,18 +260,11 @@ function finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneCh
     }))
     .sort((a, b) => b.avgCount - a.avgCount);
 
-  const modelSummary = [...model.entries()]
-    .map(([label, bucket]) => ({
-      label,
-      avgCount: bucket.countSum / Math.max(1, bucket.samples),
-      avgSpeedMph: mpsToMph(bucket.speedSum / Math.max(1, bucket.samples)),
-      laneKeeping: summarizeLaneKeeping(bucket.laneKeeping),
-    }))
-    .sort((a, b) => b.avgCount - a.avgCount);
-
   const laneKeeping = createLaneKeepingAccumulator();
   const egoLaneKeeping = createLaneKeepingAccumulator();
   for (const sample of samples) mergeLaneKeeping(laneKeeping, sample.laneKeeping);
+  const drifterLaneKeeping = createLaneKeepingAccumulator();
+  for (const sample of samples) mergeLaneKeeping(drifterLaneKeeping, sample.drifterLaneKeeping);
   for (const sample of samples) mergeLaneKeeping(egoLaneKeeping, sample.egoLaneKeeping);
   const speedStdMph = mpsToMph(mean(samples.map((sample) => sample.speedStd)));
   const stoppedFraction = mean(samples.map((sample) => sample.stoppedFraction));
@@ -255,11 +283,12 @@ function finalizeRun(seed, density, seconds, warmup, samples, passEvents, laneCh
     avgGapMeters: mean(samples.map((sample) => sample.gapMean)),
     minGapMeters: Math.min(...samples.map((sample) => sample.gapMin).filter((gap) => gap > 0)),
     laneKeeping: summarizeLaneKeeping(laneKeeping),
+    avgDrifterCount: mean(samples.map((sample) => sample.drifterCount)),
+    drifterLaneKeeping: summarizeLaneKeeping(drifterLaneKeeping),
     egoLaneKeeping: summarizeLaneKeeping(egoLaneKeeping),
     stoppedFraction,
     flowPerMinute,
     collisionDelta,
-    modelSummary,
     personalitySummary,
   };
 }
@@ -281,6 +310,9 @@ function summarizeReports(reports) {
     assignedLaneExitPct: mean(reports.map((report) => report.laneKeeping.assignedLaneExitPct)),
     roadExitPct: mean(reports.map((report) => report.laneKeeping.roadExitPct)),
     maxRoadOverrunMeters: Math.max(...reports.map((report) => report.laneKeeping.maxRoadOverrunMeters)),
+    avgDrifterCount: mean(reports.map((report) => report.avgDrifterCount)),
+    drifterOverLinePct: mean(reports.map((report) => report.drifterLaneKeeping.assignedLaneExitPct)),
+    drifterRoadExitPct: mean(reports.map((report) => report.drifterLaneKeeping.roadExitPct)),
     egoLaneErrorRmsMeters: mean(reports.map((report) => report.egoLaneKeeping.laneErrorRmsMeters)),
     egoHeadingRmsDegrees: mean(reports.map((report) => report.egoLaneKeeping.headingRmsDegrees)),
     egoAssignedLaneExitPct: mean(reports.map((report) => report.egoLaneKeeping.assignedLaneExitPct)),
@@ -288,6 +320,12 @@ function summarizeReports(reports) {
     stoppedFraction: mean(reports.map((report) => report.stoppedFraction)),
     flowPerMinute: mean(reports.map((report) => report.flowPerMinute)),
     collisions: reports.reduce((total, report) => total + report.collisionDelta, 0),
+    egoEdgeHits: reports.reduce((total, report) => total + report.egoEdgeHits, 0),
+    egoEdgeContactPct: mean(reports.map((report) => report.egoEdgeContactPct)),
+    trafficEdgeContactPct: mean(reports.map((report) => report.trafficEdgeContactPct)),
+    trafficEdgeHits: reports.reduce((total, report) => total + report.trafficEdgeHits, 0),
+    trafficEdgeHitsPerVehicleHour: mean(reports.map((report) => report.trafficEdgeHitsPerVehicleHour)),
+    trafficEdgeHitsDuringLaneChange: reports.reduce((total, report) => total + report.trafficEdgeHitsDuringLaneChange, 0),
   };
 }
 
@@ -318,24 +356,27 @@ function printReport(reports, summary) {
     `ego assist lane rms=${summary.egoLaneErrorRmsMeters.toFixed(2)} m heading rms=${summary.egoHeadingRmsDegrees.toFixed(1)} deg ` +
       `assigned-exit=${summary.egoAssignedLaneExitPct.toFixed(1)}% offroad=${summary.egoRoadExitPct.toFixed(1)}%`,
   );
+  console.log(
+    `lane drifters=${summary.avgDrifterCount.toFixed(1)} over a lane line ${summary.drifterOverLinePct.toFixed(1)}% of the time ` +
+      `(not counted in lane keeping above)`,
+  );
+  console.log(
+    `edge contact traffic=${summary.trafficEdgeContactPct.toFixed(2)}% ego=${summary.egoEdgeContactPct.toFixed(2)}% ` +
+      `ego edge hits=${summary.egoEdgeHits}`,
+  );
+  console.log(
+    `traffic edge hits=${summary.trafficEdgeHits} (${summary.trafficEdgeHitsPerVehicleHour.toFixed(2)}/vehicle-hour, ` +
+      `${summary.trafficEdgeHitsDuringLaneChange} mid lane change)`,
+  );
 
   for (const report of reports) {
     console.log('');
     console.log(`seed ${report.seed}`);
     console.log(
       `  cars=${report.avgTrafficCount.toFixed(1)} speed=${report.avgSpeedMph.toFixed(1)} mph ` +
-        `wave=${report.waveIndex.toFixed(1)} flow=${report.flowPerMinute.toFixed(1)} veh/min collisions=${report.collisionDelta}`,
+        `wave=${report.waveIndex.toFixed(1)} flow=${report.flowPerMinute.toFixed(1)} veh/min collisions=${report.collisionDelta} ` +
+        `edge traffic=${report.trafficEdgeContactPct.toFixed(2)}% traffic hits=${report.trafficEdgeHits} ego hits=${report.egoEdgeHits}`,
     );
-    for (const model of report.modelSummary) {
-      console.log(
-        `  model ${model.label.padEnd(7)} count=${model.avgCount.toFixed(1).padStart(5)} ` +
-          `laneRms=${model.laneKeeping.laneErrorRmsMeters.toFixed(2).padStart(4)}m ` +
-          `head=${model.laneKeeping.headingRmsDegrees.toFixed(1).padStart(4)}deg ` +
-          `steer=${model.laneKeeping.steeringRateMean.toFixed(2).padStart(4)}/s ` +
-          `exit=${model.laneKeeping.assignedLaneExitPct.toFixed(1).padStart(4)}% ` +
-          `off=${model.laneKeeping.roadExitPct.toFixed(1).padStart(4)}%`,
-      );
-    }
     for (const personality of report.personalitySummary) {
       console.log(
         `  ${personality.label.padEnd(10)} count=${personality.avgCount.toFixed(1).padStart(5)} ` +
@@ -345,7 +386,8 @@ function printReport(reports, summary) {
           `exc=${personality.laneKeeping.laneExcursionPct.toFixed(1).padStart(4)}% ` +
           `exit=${personality.laneKeeping.assignedLaneExitPct.toFixed(1).padStart(4)}% ` +
           `off=${personality.laneKeeping.roadExitPct.toFixed(1).padStart(4)}% ` +
-          `laneChanges=${String(personality.laneChanges).padStart(4)} hardBrakes=${String(personality.hardBrakes).padStart(4)}`,
+          `laneChanges=${String(personality.laneChanges).padStart(4)} hardBrakes=${String(personality.hardBrakes).padStart(4)} ` +
+          `edgeHits=${String(report.edgeHitsByPersonality[personality.label]?.hits ?? 0).padStart(3)}`,
       );
     }
   }
@@ -365,10 +407,13 @@ function printReport(reports, summary) {
     console.log('- Throughput is low: reduce truck/cautious share or increase desired speeds.');
   }
   if (summary.laneErrorRmsMeters > 0.42 || summary.headingRmsDegrees > 4 || summary.laneExcursionPct > 4) {
-    console.log('- Lane keeping is unstable: lower steeringGain/headingGain or increase steering actuator smoothing for the worst personalities.');
+    console.log('- Lane keeping is unstable: lower headingGain or increase steering actuator smoothing for the worst personalities.');
   }
   if (summary.assignedLaneExitPct > 1.5) {
     console.log('- Vehicles are leaving assigned lanes outside planned changes: lower lateral gains or lane-change eagerness for the worst personalities.');
+  }
+  if (summary.trafficEdgeHits > 0 || summary.egoEdgeHits > 0) {
+    console.log('- Vehicles are hitting the road edge: strengthen edge recovery or soften outer-lane steering for the worst personalities.');
   }
   if (summary.roadExitPct > 0) {
     console.log('- Vehicles are leaving the road: strengthen road-edge recovery or reduce outer-lane lane-change aggressiveness.');
@@ -386,7 +431,6 @@ function updateSamplePrevious(state, previousSample) {
       actualSteering: vehicle.actualSteering,
       targetLane: vehicle.targetLane,
       activeLaneChange,
-      laneControlModel: vehicle.laneControlModel,
     });
   }
 }
@@ -483,14 +527,15 @@ function vehicleBodyExitsAssignedLane(vehicle, laneError) {
   return Math.abs(laneError) + halfWidth > ROAD_LANE_WIDTH / 2 + 0.05;
 }
 
+function edgeClearance(vehicle) {
+  const edgeLimit = (ROAD_LANE_COUNT * ROAD_LANE_WIDTH) / 2 - (vehicle.width ?? 2) / 2 - 0.03;
+  return edgeLimit - Math.abs(vehicle.lateral);
+}
+
 function vehicleRoadOverrun(vehicle) {
   const roadHalfWidth = (ROAD_LANE_COUNT * ROAD_LANE_WIDTH) / 2;
   const halfWidth = (vehicle.width ?? 2) / 2;
   return Math.max(0, Math.abs(vehicle.lateral) + halfWidth - roadHalfWidth);
-}
-
-function laneModelLabel(model) {
-  return model === 'lateralVelocity' ? 'LatVel' : 'Clamped';
 }
 
 function laneCenter(laneIndex) {
