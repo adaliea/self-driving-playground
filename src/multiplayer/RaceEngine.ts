@@ -156,6 +156,11 @@ export class RaceEngine {
       return;
     }
     driver.compiled = { version, js: result.js };
+    // Warm the iframe now so round start only has to load code, not boot every runner at once.
+    if (!driver.sandbox) {
+      driver.sandbox = new SandboxClient('/sandbox.html');
+      driver.sandbox.start().catch(() => undefined);
+    }
     this.setStatus(
       driver,
       version,
@@ -402,11 +407,16 @@ export class RaceEngine {
       }
       return true;
     } catch (error) {
+      // Keep the compiled code: a fresh runner retries it next round, so the player is never stuck.
       driver.sandbox?.dispose();
       driver.sandbox = undefined;
       driver.loadedVersion = undefined;
-      driver.compiled = undefined;
-      this.setStatus(driver, compiled.version, 'error', `Version ${compiled.version} failed to load:\n${formatError(error)}`);
+      this.setStatus(
+        driver,
+        compiled.version,
+        'error',
+        `Version ${compiled.version} could not start this round (it will be retried next round):\n${formatError(error)}`,
+      );
       return false;
     }
   }

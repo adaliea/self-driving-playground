@@ -3,20 +3,24 @@ import type { CreateRoomResponse, JoinRoomRequest, JoinRoomResponse } from './pr
 const PING_INTERVAL_MS = 20_000;
 const MAX_RECONNECT_DELAY_MS = 8_000;
 
-export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
+/** `unreachable` means several attempts failed without ever connecting, e.g. the room expired. */
+export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'unreachable' | 'closed';
+
+const UNREACHABLE_AFTER_ATTEMPTS = 4;
 
 /** WebSocket wrapper that reconnects with backoff and keeps the socket alive with pings. */
 export class RoomConnection<Incoming, Outgoing> {
   private socket?: WebSocket;
   private closed = false;
   private attempts = 0;
+  private everOpened = false;
   private pingTimer?: number;
   private reconnectTimer?: number;
 
   constructor(
     private readonly url: string,
     private readonly onMessage: (message: Incoming) => void,
-    private readonly onStatus: (status: ConnectionStatus, detail?: string) => void,
+    private readonly onStatus: (status: ConnectionStatus) => void,
   ) {
     this.connect();
   }
@@ -36,12 +40,13 @@ export class RoomConnection<Incoming, Outgoing> {
   }
 
   private connect(): void {
-    this.onStatus(this.attempts === 0 ? 'connecting' : 'reconnecting');
+    if (this.attempts === 0) this.onStatus('connecting');
     const socket = new WebSocket(this.url);
     this.socket = socket;
 
     socket.addEventListener('open', () => {
       this.attempts = 0;
+      this.everOpened = true;
       this.onStatus('open');
       window.clearInterval(this.pingTimer);
       this.pingTimer = window.setInterval(() => this.send({ type: 'ping' } as Outgoing), PING_INTERVAL_MS);
@@ -59,7 +64,7 @@ export class RoomConnection<Incoming, Outgoing> {
       if (this.closed || this.socket !== socket) return;
       this.attempts += 1;
       const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * 2 ** Math.min(this.attempts, 5));
-      this.onStatus('reconnecting');
+      this.onStatus(!this.everOpened && this.attempts >= UNREACHABLE_AFTER_ATTEMPTS ? 'unreachable' : 'reconnecting');
       this.reconnectTimer = window.setTimeout(() => this.connect(), delay);
     });
   }

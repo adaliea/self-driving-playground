@@ -290,6 +290,11 @@ function RaceBar({
         </div>
       </div>
 
+      {state.connection === 'unreachable' ? (
+        <div className="mt-1 text-xs text-red-400">
+          Can't reach room {session.roomCode}. It may have closed. Leave and join the presenter's current code.
+        </div>
+      ) : null}
       {status || state.notice ? (
         <div className="mt-1 flex items-start gap-2 text-xs">
           <span className={status?.tone === 'error' || state.notice ? 'text-red-400' : 'text-muted-foreground'}>

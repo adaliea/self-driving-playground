@@ -384,6 +384,23 @@ export function HostView() {
         </div>
       ) : null}
 
+      {connection === 'unreachable' ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#1d1b2e]/40">
+          <div className={`max-w-md p-6 text-center ${panel}`}>
+            <div className="text-2xl font-black">Can't reach room {session?.roomCode}</div>
+            <div className="mt-2 font-bold opacity-70">It may have expired after a day without activity.</div>
+            <button
+              type="button"
+              onClick={() => void startNewRoom()}
+              className="mt-4 rounded-2xl border-[3px] border-[#1d1b2e] bg-[#ffd23f] px-6 py-2 text-xl font-black shadow-[4px_4px_0_#1d1b2e]"
+            >
+              Create a new room
+            </button>
+            {error ? <div className="mt-2 text-sm text-[#ef233c]">{error}</div> : null}
+          </div>
+        </div>
+      ) : null}
+
       {/* Host controls */}
       <div className="absolute bottom-4 right-4 flex flex-col items-end gap-2">
         {controlsOpen && config ? (
