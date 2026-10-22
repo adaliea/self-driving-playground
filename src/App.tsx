@@ -334,9 +334,7 @@ function App() {
           <Suspense
             fallback={
               <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden bg-background">
-                <div className="border-b border-border px-4 py-3">
-                  <div className="h-8 w-48 rounded bg-muted" />
-                </div>
+                <div className="h-12 border-b border-border" />
                 <div className="flex min-h-[420px] flex-1 items-center justify-center text-sm text-muted-foreground">
                   Loading editor
                 </div>

@@ -2,26 +2,32 @@ import type { ChartSample, ChartSeries } from './TelemetryChart';
 import type { NamedPidTelemetry } from './pidTelemetry';
 import type { TelemetryHistory } from './telemetryHistory';
 import { pidSeriesValue, type PidSeries } from './pidHistory';
+import { colorblindPalette as cb, pidTermColorblindStyle, type LinePattern } from './chartStyles';
 
 export interface TelemetrySignal extends ChartSeries { group: string }
 export const defaultSignals = ['speed', 'actualMotor', 'actualSteering'];
 const colors = ['#38bdf8', '#fbbf24', '#34d399', '#fb7185', '#c4b5fd', '#e2e8f0', '#fb923c'];
+// Colorblind-friendly mode: motor and steering each keep one hue, and the pipeline stage is the pattern.
+const stagePatterns: LinePattern[] = ['solid', 'dashed', 'dotted'];
 const pidTerms: [PidSeries, string][] = [['error', 'Error'], ['proportional', 'P'], ['integral', 'I'], ['derivative', 'D'], ['sum', 'P + I + D'], ['output', 'Output']];
 export function telemetrySignals(controllers: NamedPidTelemetry[]): TelemetrySignal[] {
   return [
-    { key: 'speed', label: 'Speed', group: 'Vehicle', axis: 'mph', color: colors[0] },
-    { key: 'leadSpeed', label: 'Lead · estimated forward speed (mph)', group: 'Lead vehicle', axis: 'mph', color: '#fbbf24' },
-    { key: 'leadRelativeY', label: 'Lead · distance ahead (m)', group: 'Lead vehicle', axis: 'm', color: '#34d399' },
-    { key: 'leadRelativeX', label: 'Lead · lateral offset (m, +right)', group: 'Lead vehicle', axis: 'm', color: '#c4b5fd' },
-    { key: 'leadRelativeVy', label: 'Lead · relative forward velocity (m/s)', group: 'Lead vehicle', axis: 'm/s', color: '#fb7185' },
-    { key: 'leadRelativeVx', label: 'Lead · relative lateral velocity (m/s, +right)', group: 'Lead vehicle', axis: 'm/s', color: '#fb923c' },
+    { key: 'speed', label: 'Speed', group: 'Vehicle', axis: 'mph', color: colors[0], colorblindColor: cb.blue, pattern: 'solid' },
+    // Lead signals share the dash-dot pattern; lead speed reuses the speed hue so the two read as a pair.
+    { key: 'leadSpeed', label: 'Lead · estimated forward speed (mph)', group: 'Lead vehicle', axis: 'mph', color: '#fbbf24', colorblindColor: cb.blue, pattern: 'dashdot' },
+    { key: 'leadRelativeY', label: 'Lead · distance ahead (m)', group: 'Lead vehicle', axis: 'm', color: '#34d399', colorblindColor: cb.violet, pattern: 'dashdot' },
+    { key: 'leadRelativeX', label: 'Lead · lateral offset (m, +right)', group: 'Lead vehicle', axis: 'm', color: '#c4b5fd', colorblindColor: cb.magenta, pattern: 'dashdot' },
+    { key: 'leadRelativeVy', label: 'Lead · relative forward velocity (m/s)', group: 'Lead vehicle', axis: 'm/s', color: '#fb7185', colorblindColor: cb.green, pattern: 'dashdot' },
+    { key: 'leadRelativeVx', label: 'Lead · relative lateral velocity (m/s, +right)', group: 'Lead vehicle', axis: 'm/s', color: '#fb923c', colorblindColor: cb.red, pattern: 'dashdot' },
     ...(['Motor', 'Steering'] as const).flatMap((axis, axisIndex) => (['user', 'final', 'actual'] as const).map((stage, index) => ({
       key: `${stage}${axis}`, label: `${axis} · ${['autopilot', 'after assists', 'actual'][index]}`,
-      group: axis, axis: 'Command', color: colors[(index + axisIndex * 3 + 1) % colors.length], dash: index === 1 ? 'dashed' : undefined,
+      group: axis, axis: 'Command', color: colors[(index + axisIndex * 3 + 1) % colors.length],
+      colorblindColor: axis === 'Motor' ? cb.orange : cb.aqua, pattern: stagePatterns[index],
     }))),
     ...controllers.flatMap((controller, controllerIndex) => pidTerms.map(([term, label], index) => ({
       key: `pid:${controller.id}:${term}`, label: `${controller.name} · ${label}`, group: controller.name,
-      axis: term === 'error' ? 'Error' : 'Command', color: colors[(index + controllerIndex) % colors.length], dash: term === 'sum' ? 'dashed' : undefined,
+      axis: term === 'error' ? 'Error' : 'Command', color: colors[(index + controllerIndex) % colors.length],
+      ...pidTermColorblindStyle[term],
     }))),
   ];
 }

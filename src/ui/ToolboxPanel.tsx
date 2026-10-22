@@ -22,40 +22,41 @@ export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
     <div className="relative">
       <Button
         type="button"
-        variant="outline"
+        variant={open ? 'secondary' : 'ghost'}
         size="sm"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
       >
-        <Wrench className="text-blue-300" />
+        <Wrench />
         Toolbox
       </Button>
 
       {open ? (
-        <div className="absolute right-0 top-10 z-30 w-[min(34rem,calc(100vw-2rem))] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg lg:w-[min(34rem,calc(50vw-2rem))]">
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-            <div className="grid content-start gap-2">
+        <div className="absolute right-0 top-9 z-30 w-[min(34rem,calc(100vw-2rem))] rounded-md border border-input bg-popover p-2 text-popover-foreground shadow-xl shadow-black/50 lg:w-[min(34rem,calc(50vw-2rem))]">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+            <div className="grid content-start gap-0.5">
               {snippets.map((snippet) => (
                 <button
                   key={snippet.id}
                   type="button"
                   onClick={() => setSelectedId(snippet.id)}
-                  className={`min-w-0 rounded-md border px-3 py-2 text-left text-xs transition ${
+                  aria-pressed={selected.id === snippet.id}
+                  className={`min-w-0 rounded px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
                     selected.id === snippet.id
-                      ? 'border-blue-500/30 bg-blue-500/10 text-blue-100'
-                      : 'border-border bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground'
+                      ? 'bg-accent text-foreground'
+                      : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
                   }`}
                 >
-                  <span className="block truncate font-semibold">{snippet.title}</span>
-                  <span className="mt-1 block text-[10px] uppercase tracking-[0.18em] opacity-70">{snippet.category}</span>
+                  <span className="block truncate text-sm">{snippet.title}</span>
+                  <span className="block text-xs text-muted-foreground">{snippet.category}</span>
                 </button>
               ))}
             </div>
 
-            <div className="min-w-0">
-              <div className="rounded-md border border-border bg-card p-3 text-card-foreground">
-                <div className="text-sm font-semibold">{selected.title}</div>
-                <p className="mt-2 text-sm leading-5 text-muted-foreground">{selected.description}</p>
+            <div className="min-w-0 p-1">
+              <div>
+                <div className="text-sm font-medium">{selected.title}</div>
+                <p className="mt-1 text-sm leading-5 text-muted-foreground">{selected.description}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button
                     type="button"
@@ -68,7 +69,7 @@ export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
                 </div>
               </div>
 
-              <pre className="mt-3 max-h-64 overflow-auto rounded-md border border-border bg-muted p-3 font-mono text-xs leading-5 text-muted-foreground">
+              <pre className="mt-3 max-h-64 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
                 <code>{highlightTypeScript(selected.implementation)}</code>
               </pre>
             </div>
@@ -140,13 +141,13 @@ function tokenClassName(kind: CodeToken['kind']): string {
     case 'comment':
       return 'text-muted-foreground';
     case 'keyword':
-      return 'text-blue-300';
+      return 'text-[#89a9ff]';
     case 'type':
-      return 'text-emerald-300';
+      return 'text-foreground';
     case 'string':
-      return 'text-green-300';
+      return 'text-signal';
     case 'number':
-      return 'text-yellow-200';
+      return 'text-warning';
     case 'operator':
       return 'text-muted-foreground';
     default:

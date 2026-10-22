@@ -1,4 +1,4 @@
-import { Activity, ArrowRight, Camera, Car, Clock3, Ruler } from 'lucide-react';
+import { ArrowRight, Car } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
   AlertDialog,
@@ -16,30 +16,27 @@ interface NoiseInfoDialogProps {
 export function NoiseInfoDialog({ open, onOpenChange }: NoiseInfoDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className="max-h-[min(92vh,54rem)] w-[min(58rem,calc(100vw-2rem))] overflow-y-auto border-zinc-700 bg-[#0d1014]">
-        <header className="sticky top-0 z-10 border-b border-zinc-700 bg-[#0d1014] px-5 py-4 sm:px-8">
-          <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-amber-300">
-            <Camera size={14} /> Vehicle perception
-          </div>
-          <AlertDialogTitle className="mt-2 text-xl font-medium text-zinc-100 sm:text-2xl">
+      <AlertDialogContent className="max-h-[min(92vh,54rem)] w-[min(58rem,calc(100vw-2rem))] overflow-y-auto border-input bg-popover">
+        <header className="sticky top-0 z-10 border-b border-border bg-popover px-5 py-4 sm:px-8">
+          <AlertDialogTitle className="text-xl font-medium text-foreground">
             How vehicle measurement noise works
           </AlertDialogTitle>
-          <AlertDialogDescription className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
+          <AlertDialogDescription className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
             The camera estimates a box each frame. The tracker combines those estimates into a steadier position and velocity.
           </AlertDialogDescription>
         </header>
 
-        <article className="px-5 py-7 text-zinc-100 sm:px-8 sm:py-9">
+        <article className="px-5 py-7 text-foreground sm:px-8 sm:py-8">
           <FrameSequence />
 
-          <section className="mt-7 grid gap-px overflow-hidden rounded-lg border border-zinc-700 bg-zinc-700 sm:grid-cols-3">
-            <DarkNote icon={<Ruler />} title="Distance amplifies error">
+          <section className="mt-7 grid gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-3">
+            <DarkNote title="Distance amplifies error">
               Far cars occupy fewer pixels, so depth and angle vary more than side-to-side position.
             </DarkNote>
-            <DarkNote icon={<Activity />} title="Most jitter is temporary">
+            <DarkNote title="Most jitter is temporary">
               About 95% of the variance is fresh each frame, so repeated observations can average it down.
             </DarkNote>
-            <DarkNote icon={<Clock3 />} title="A little error persists">
+            <DarkNote title="A little error persists">
               About 5% is slow bias from effects such as calibration, lighting, or road slope. It is intentionally modest.
             </DarkNote>
           </section>
@@ -47,7 +44,7 @@ export function NoiseInfoDialog({ open, onOpenChange }: NoiseInfoDialogProps) {
           <FilterExplanation />
           <InputMap />
 
-          <section className="mt-8 border-t border-zinc-700 pt-6">
+          <section className="mt-8 border-t border-border pt-6">
             <h2 className="text-lg font-medium">Other settings</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <SettingNote name="Seed" effect="Chooses the repeatable road, traffic, and noise sequence. It applies after Reset." />
@@ -60,8 +57,8 @@ export function NoiseInfoDialog({ open, onOpenChange }: NoiseInfoDialogProps) {
           </section>
         </article>
 
-        <div className="sticky bottom-0 flex justify-end border-t border-zinc-700 bg-[#0d1014] px-6 py-3">
-          <AlertDialogCancel className="mt-0 border-zinc-600 bg-zinc-900 text-zinc-100 hover:bg-zinc-800">Close</AlertDialogCancel>
+        <div className="sticky bottom-0 flex justify-end border-t border-border bg-popover px-6 py-3">
+          <AlertDialogCancel className="mt-0">Close</AlertDialogCancel>
         </div>
       </AlertDialogContent>
     </AlertDialog>
@@ -72,11 +69,11 @@ function FrameSequence() {
   return (
     <section aria-labelledby="frames-heading">
       <div className="max-w-3xl">
-        <h2 id="frames-heading" className="text-2xl font-medium tracking-tight sm:text-3xl">
+        <h2 id="frames-heading" className="text-lg font-medium">
           The car is steady. The measurements are not.
         </h2>
-        <p className="mt-3 text-sm leading-6 text-zinc-400">
-          Each dashed box is a fresh camera estimate. The solid blue track follows their shared motion instead of chasing every small jump.
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          Each dashed amber box is a fresh camera estimate. The solid mint track follows their shared motion instead of chasing every small jump.
         </p>
       </div>
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
@@ -90,7 +87,7 @@ function FrameSequence() {
 
 function FilterExplanation() {
   return (
-    <section className="mt-8 border-y border-zinc-700 py-7">
+    <section className="mt-8 border-y border-border py-7">
       <div className="grid items-stretch gap-3 md:grid-cols-[1fr_auto_1fr_auto_1fr]">
         <FilterStep number="1" title="Predict from position + velocity">
           Carry the previous track forward. This bridges short missed detections, but its uncertainty grows while no box is seen.
@@ -104,7 +101,7 @@ function FilterExplanation() {
           Trust a precise new box more. Trust the prediction more when the measurement is noisy or far away.
         </FilterStep>
       </div>
-      <p className="mx-auto mt-5 max-w-3xl text-center text-xs leading-5 text-zinc-500">
+      <p className="mt-5 max-w-3xl text-xs leading-5 text-muted-foreground">
         This repeats every frame. Filtering reduces random jitter without pretending the sensor is exact; persistent bias can remain, and a track is removed if a measurement is missing for more than 420 ms.
       </p>
     </section>
@@ -115,19 +112,18 @@ function InputMap() {
   return (
     <section className="mt-8">
       <div className="max-w-3xl">
-        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-sky-300">Data passed to autopilot(input)</div>
-        <h2 className="mt-2 text-2xl font-medium">What the two noise settings change</h2>
-        <p className="mt-3 text-sm leading-6 text-zinc-400">
+        <h2 className="text-lg font-medium">What the two noise settings change in <code className="font-mono text-base">autopilot(input)</code></h2>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
           Both settings change sensor fields before your controller runs. Vehicle data offers both stages; lane data currently offers only the direct detection.
         </p>
       </div>
 
-      <div className="mt-5 overflow-hidden rounded-lg border border-zinc-700">
+      <div className="mt-5 overflow-hidden rounded-md border border-border">
         <InputRow
           setting="Noisy vehicle poses"
           field="input.vehicleMeasurements"
-          status="Raw · not filtered"
-          tone="amber"
+          status="Raw, not filtered"
+          tone="raw"
         >
           When on, position, rotation, size, confidence, and uncertainty vary with distance, and measurements may briefly disappear. When off, these observations use exact simulated geometry.
         </InputRow>
@@ -135,15 +131,15 @@ function InputMap() {
           setting="Noisy vehicle poses"
           field="input.vehicles"
           status="Pre-filtered tracks"
-          tone="blue"
+          tone="track"
         >
           Always produced by the built-in constant-velocity tracker. With noise on it smooths measurements and predicts through short dropouts; with noise off it tracks exact observations.
         </InputRow>
         <InputRow
           setting="Noisy lane lines"
           field="input.laneLines"
-          status="Raw · not temporally filtered"
-          tone="amber"
+          status="Raw, not filtered over time"
+          tone="raw"
         >
           When on, individual lane samples jitter, lose confidence, or disappear—especially farther ahead. When off, the samples match the simulated road. No built-in tracker smooths them over time.
         </InputRow>
@@ -154,55 +150,57 @@ function InputMap() {
 
 function FilmFrame({ index, offset, tracked = false }: { index: string; offset: string; tracked?: boolean }) {
   return (
-    <figure className="border border-zinc-700 bg-black p-2">
-      <div className="relative h-40 overflow-hidden bg-zinc-900">
-        <div className="absolute inset-y-0 left-1/2 w-20 -translate-x-1/2 border-x border-zinc-700" />
-        <div className="absolute inset-y-0 left-1/2 border-l border-dashed border-zinc-600" />
-        <div className="absolute left-1/2 top-1/2 flex h-14 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-sm bg-zinc-300 text-zinc-800"><Car size={15} /></div>
-        <div className={`absolute left-1/2 top-1/2 h-16 w-10 -translate-x-1/2 -translate-y-1/2 border-2 border-dashed border-amber-300 ${offset}`} />
-        {tracked ? <div className="absolute left-1/2 top-1/2 h-16 w-10 -translate-x-1/2 -translate-y-1/2 border-2 border-sky-400" /> : null}
+    <figure className="rounded-md border border-border bg-background p-2">
+      <div className="relative h-40 overflow-hidden rounded-sm bg-card">
+        <div className="absolute inset-y-0 left-1/2 w-20 -translate-x-1/2 border-x border-input" />
+        <div className="absolute inset-y-0 left-1/2 border-l border-dashed border-input" />
+        <div className="absolute left-1/2 top-1/2 flex h-14 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-sm bg-[#dce8ee] text-background"><Car size={15} /></div>
+        <div className={`absolute left-1/2 top-1/2 h-16 w-10 -translate-x-1/2 -translate-y-1/2 border-2 border-dashed border-warning ${offset}`} />
+        {tracked ? <div className="absolute left-1/2 top-1/2 h-16 w-10 -translate-x-1/2 -translate-y-1/2 border-2 border-signal" /> : null}
       </div>
-      <figcaption className="flex justify-between pt-2 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
+      <figcaption className="flex justify-between px-0.5 pt-2 text-xs text-muted-foreground">
         <span>Frame {index}</span><span>{tracked ? 'track added' : 'raw detection'}</span>
       </figcaption>
     </figure>
   );
 }
 
-function DarkNote({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+function DarkNote({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="bg-zinc-900 p-4">
-      <div className="flex items-center gap-2 text-amber-200 [&_svg]:h-4 [&_svg]:w-4">{icon}<h3 className="text-sm font-medium text-zinc-100">{title}</h3></div>
-      <p className="mt-2 text-xs leading-5 text-zinc-400">{children}</p>
+    <section className="bg-popover p-4">
+      <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">{children}</p>
     </section>
   );
 }
 
 function FilterStep({ number, title, children }: { number: string; title: string; children: ReactNode }) {
   return (
-    <section className="border-t-2 border-sky-400 bg-zinc-900 p-4">
-      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-sky-300">Step {number}</div>
-      <h3 className="mt-2 text-sm font-medium text-zinc-100">{title}</h3>
-      <p className="mt-2 text-xs leading-5 text-zinc-400">{children}</p>
+    <section className="rounded-md border border-border p-4">
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-xs text-muted-foreground">{number}.</span>
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      </div>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">{children}</p>
     </section>
   );
 }
 
 function StepArrow() {
-  return <div className="flex items-center justify-center"><ArrowRight className="rotate-90 text-zinc-600 md:rotate-0" size={18} /></div>;
+  return <div className="flex items-center justify-center"><ArrowRight className="rotate-90 text-muted-foreground/50 md:rotate-0" size={18} /></div>;
 }
 
-function InputRow({ setting, field, status, tone, children }: { setting: string; field: string; status: string; tone: 'amber' | 'blue'; children: ReactNode }) {
-  const badge = tone === 'blue' ? 'border-sky-400/30 bg-sky-400/10 text-sky-200' : 'border-amber-300/30 bg-amber-300/10 text-amber-200';
+function InputRow({ setting, field, status, tone, children }: { setting: string; field: string; status: string; tone: 'raw' | 'track'; children: ReactNode }) {
+  const badge = tone === 'track' ? 'text-signal' : 'text-warning';
   return (
-    <section className="grid gap-3 border-b border-zinc-700 bg-zinc-900 p-4 last:border-b-0 md:grid-cols-[10rem_13rem_1fr] md:items-start">
-      <div className="text-xs font-medium text-zinc-300">{setting}</div>
-      <div><code className="font-mono text-xs text-zinc-100">{field}</code><div className={`mt-2 inline-flex rounded border px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] ${badge}`}>{status}</div></div>
-      <p className="text-xs leading-5 text-zinc-400">{children}</p>
+    <section className="grid gap-3 border-b border-border p-4 last:border-b-0 md:grid-cols-[10rem_13rem_1fr] md:items-start">
+      <div className="text-sm text-foreground">{setting}</div>
+      <div><code className="font-mono text-xs text-foreground">{field}</code><div className={`mt-1 text-xs ${badge}`}>{status}</div></div>
+      <p className="text-xs leading-5 text-muted-foreground">{children}</p>
     </section>
   );
 }
 
 function SettingNote({ name, effect }: { name: string; effect: string }) {
-  return <section className="border-l-2 border-zinc-600 pl-3"><h3 className="text-sm font-medium text-zinc-200">{name}</h3><p className="mt-1 text-xs leading-5 text-zinc-500">{effect}</p></section>;
+  return <section><h3 className="text-sm font-medium text-foreground">{name}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{effect}</p></section>;
 }

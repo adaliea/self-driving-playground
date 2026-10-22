@@ -5,7 +5,7 @@ import { recordTelemetry, type TelemetryHistory } from './telemetryHistory';
 import type { PidSample } from './pidHistory';
 import type { RuntimeInspectionStore } from '../sandbox';
 import { pidTelemetryFromInspection } from './pidTelemetry';
-import { AlertTriangle, ChevronDown, GitPullRequestArrow, Info, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Info, ShieldCheck } from 'lucide-react';
 import type { RenderTelemetry } from '../rendering';
 import type { PidDebugTerms } from '../types';
 
@@ -33,37 +33,37 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
   const speed = telemetry?.speedMph ?? 0;
 
   return (
-    <aside className="relative z-10 max-h-[42vh] min-w-0 overflow-auto border-t border-border bg-background p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-foreground">Telemetry</h2>
+    <aside className="relative z-10 max-h-[42vh] min-w-0 overflow-auto border-t border-border bg-background px-4 pb-4">
+      <div className="flex h-11 items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-foreground">Telemetry</h2>
         <TelemetryExplorer history={history} controllers={controllers} running={inspection.running} />
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 2xl:grid-cols-3">
-        <Metric label="Speed" value={`${speed.toFixed(1)} mph`} />
-        <Metric label="Lane" value={`${telemetry?.laneIndex ?? 0} -> ${telemetry?.targetLane ?? 0}`} />
-        <Metric label="Motor cmd" value={formatSigned(telemetry?.finalMotor ?? 0)} accent={telemetry?.motorOverridden} />
-        <Metric label="Steer cmd" value={formatSigned(telemetry?.finalSteering ?? 0)} accent={telemetry?.steerOverridden} />
+      <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-6">
+        <Metric label="Speed" value={speed.toFixed(1)} unit="mph" />
+        <Metric label="Lane" value={`${telemetry?.laneIndex ?? 0} → ${telemetry?.targetLane ?? 0}`} />
+        <Metric label="Motor cmd" value={formatSigned(telemetry?.finalMotor ?? 0)} assisted={telemetry?.motorOverridden} />
         <Metric label="Motor actual" value={formatSigned(telemetry?.actualMotor ?? 0)} />
+        <Metric label="Steer cmd" value={formatSigned(telemetry?.finalSteering ?? 0)} assisted={telemetry?.steerOverridden} />
         <Metric label="Steer actual" value={formatSigned(telemetry?.actualSteering ?? 0)} />
-      </div>
+      </dl>
 
-      <div className="mt-4 grid gap-2 md:grid-cols-2">
-        {telemetry?.steerOverridden ? <AssistBadge label="Steering overridden by lane-centering assist" /> : null}
-        {telemetry?.motorOverridden ? <AssistBadge label="Motor overridden by adaptive cruise assist" /> : null}
+      <ul className="mt-3 space-y-1 empty:hidden">
+        {telemetry?.steerOverridden ? <StatusLine tone="assist" label="Steering overridden by lane-centering assist" /> : null}
+        {telemetry?.motorOverridden ? <StatusLine tone="assist" label="Motor overridden by adaptive cruise assist" /> : null}
         {telemetry?.invalidFields.length ? (
-          <WarningBadge label={`Invalid output fields clamped: ${telemetry.invalidFields.join(', ')}`} />
+          <StatusLine tone="warning" label={`Invalid output fields clamped: ${telemetry.invalidFields.join(', ')}`} />
         ) : null}
-        {telemetry?.collisions ? <WarningBadge label={`Ego collision count: ${telemetry.collisions}`} /> : null}
-      </div>
+        {telemetry?.collisions ? <StatusLine tone="warning" label={`Ego collision count: ${telemetry.collisions}`} /> : null}
+      </ul>
 
-      <div className="grid gap-3 xl:grid-cols-2">
+      <div className="grid gap-x-6 xl:grid-cols-2">
         {controllers.map((controller) => (
           <PidBlock key={`${inspection.version}:${controller.id}`} title={controller.name} terms={controller.terms} history={history.pids[controller.id] ?? []} />
         ))}
       </div>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-4 space-y-2 empty:hidden">
         {compileErrors.length > 0 ? (
           <ErrorBox title="TypeScript compile errors" lines={compileErrors} />
         ) : runtimeError ? (
@@ -74,30 +74,27 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
   );
 }
 
-function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+function Metric({ label, value, unit, assisted = false }: { label: string; value: string; unit?: string; assisted?: boolean }) {
   return (
-    <div className={`rounded-md border px-3 py-2 ${accent ? 'border-sky-500/30 bg-sky-500/10' : 'border-border bg-card'}`}>
-      <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{label}</div>
-      <div className="mt-1 font-mono text-sm font-semibold text-card-foreground">{value}</div>
+    <div className="bg-background px-3 py-2">
+      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {label}
+        {assisted ? <span className="text-signal">assist</span> : null}
+      </dt>
+      <dd className={`mt-0.5 font-mono text-sm tabular-nums ${assisted ? 'text-signal' : 'text-foreground'}`}>
+        {value}
+        {unit ? <span className="ml-1 text-xs text-muted-foreground">{unit}</span> : null}
+      </dd>
     </div>
   );
 }
 
-function AssistBadge({ label }: { label: string }) {
+function StatusLine({ tone, label }: { tone: 'assist' | 'warning'; label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-200">
-      <ShieldCheck size={14} />
+    <li className={`flex items-center gap-2 text-xs ${tone === 'assist' ? 'text-signal' : 'text-warning'}`}>
+      {tone === 'assist' ? <ShieldCheck size={13} aria-hidden="true" /> : <AlertTriangle size={13} aria-hidden="true" />}
       {label}
-    </div>
-  );
-}
-
-function WarningBadge({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-300">
-      <AlertTriangle size={14} />
-      {label}
-    </div>
+    </li>
   );
 }
 
@@ -105,25 +102,23 @@ function PidBlock({ title, terms, history }: { title: string; terms?: Partial<Pi
   if (!terms) return null;
 
   return (
-    <div className="mt-4 rounded-md border border-border bg-card p-3">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-        <GitPullRequestArrow size={14} />
-        {title}
-      </div>
-      <div className="mt-3 grid grid-cols-5 gap-1 text-center font-mono text-xs">
+    <section className="mt-5">
+      <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      <div className="mt-2 grid grid-cols-5 gap-px overflow-visible rounded-md border border-border bg-border font-mono text-xs">
         <PidTerm label="E" value={terms.error} help={pidTermHelp.error} align="left" />
         <PidTerm label="P" value={terms.proportional} help={pidTermHelp.proportional} align="left" />
         <PidTerm label="I" value={terms.integral} help={pidTermHelp.integral} align="center" />
         <PidTerm label="D" value={terms.derivative} help={pidTermHelp.derivative} align="right" />
         <PidTerm label="Out" value={terms.output} help={pidTermHelp.output} align="right" />
       </div>
-      <details className="group mt-3 border-t border-border pt-2">
-        <summary className="flex cursor-pointer list-none items-center justify-between rounded py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-sky-400 [&::-webkit-details-marker]:hidden">
-          PID history <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+      <details className="group mt-1">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <ChevronRight size={13} className="transition-transform group-open:rotate-90" aria-hidden="true" />
+          History
         </summary>
         <PidGraph name={title} history={history} />
       </details>
-    </div>
+    </section>
   );
 }
 
@@ -181,26 +176,26 @@ function PidTerm({
       : 'left-1/2 -translate-x-1/2';
 
   return (
-    <div className="group relative rounded bg-muted px-1.5 py-2 outline-none focus-within:bg-accent hover:bg-accent">
-      <div className="flex items-center justify-center gap-1 text-[10px] text-muted-foreground">
+    <div className="group relative bg-background px-2 py-1.5 outline-none first:rounded-l-md last:rounded-r-md focus-within:bg-accent hover:bg-accent">
+      <div className="flex items-center gap-1 font-sans text-xs text-muted-foreground">
         <span>{label}</span>
         <button
           type="button"
           aria-describedby={popoverId}
-          className="rounded-full text-muted-foreground outline-none transition hover:text-sky-300 focus-visible:text-sky-300 focus-visible:ring-1 focus-visible:ring-ring"
+          className="rounded-full text-muted-foreground/60 outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
           <Info size={10} />
           <span className="sr-only">Explain {help.title}</span>
         </button>
       </div>
-      <div className="mt-1 text-foreground">{value !== undefined && Number.isFinite(value) ? formatSigned(value) : '—'}</div>
+      <div className="mt-0.5 tabular-nums text-foreground">{value !== undefined && Number.isFinite(value) ? formatSigned(value) : '—'}</div>
       <div
         id={popoverId}
         role="tooltip"
-        className={`pointer-events-none absolute bottom-[calc(100%+0.55rem)] z-30 hidden w-64 rounded-md border border-border bg-popover p-3 text-left font-sans text-popover-foreground shadow-lg group-focus-within:block group-hover:block ${alignmentClass}`}
+        className={`pointer-events-none absolute bottom-[calc(100%+0.5rem)] z-30 hidden w-64 rounded-md border border-input bg-popover p-3 text-left font-sans text-popover-foreground shadow-xl shadow-black/50 group-focus-within:block group-hover:block ${alignmentClass}`}
       >
-        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-foreground">{help.title}</div>
-        <p className="mt-2 text-xs leading-relaxed">{help.body}</p>
+        <div className="text-sm font-medium text-foreground">{help.title}</div>
+        <p className="mt-1 text-xs leading-relaxed">{help.body}</p>
         <p className="mt-2 border-t border-border pt-2 text-[11px] leading-relaxed text-muted-foreground">{help.note}</p>
       </div>
     </div>
@@ -209,9 +204,9 @@ function PidTerm({
 
 function ErrorBox({ title, lines }: { title: string; lines: string[] }) {
   return (
-    <div className="rounded-md border border-destructive/50 bg-destructive/20 p-3">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-destructive-foreground">
-        <AlertTriangle size={14} />
+    <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3">
+      <div className="flex items-center gap-2 text-sm font-medium text-destructive">
+        <AlertTriangle size={14} aria-hidden="true" />
         {title}
       </div>
       <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-destructive-foreground">

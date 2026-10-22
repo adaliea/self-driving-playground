@@ -1,5 +1,5 @@
 import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react';
-import { Braces, Code2, FileCode2, LockKeyhole, Wrench } from 'lucide-react';
+import { LockKeyhole } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { editor } from 'monaco-editor/esm/vs/editor/editor.api';
 import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
@@ -322,18 +322,24 @@ export function EditorPanel({
       base: 'vs-dark',
       inherit: true,
       rules: [
-        { token: 'comment', foreground: '71717a' },
-        { token: 'keyword', foreground: '93c5fd' },
-        { token: 'number', foreground: 'fde68a' },
-        { token: 'string', foreground: '86efac' },
+        { token: 'comment', foreground: '6b7c80' },
+        { token: 'keyword', foreground: '89a9ff' },
+        { token: 'number', foreground: 'f7c86d' },
+        { token: 'string', foreground: '6df7d1' },
       ],
       colors: {
-        'editor.background': '#09090b',
-        'editor.foreground': '#fafafa',
-        'editorLineNumber.foreground': '#71717a',
-        'editorLineNumber.activeForeground': '#fafafa',
-        'editor.selectionBackground': '#27272a',
-        'editorCursor.foreground': '#fafafa',
+        'editor.background': '#070b0d',
+        'editor.foreground': '#dde5e6',
+        'editorLineNumber.foreground': '#3f4d51',
+        'editorLineNumber.activeForeground': '#9aa9ac',
+        'editor.lineHighlightBackground': '#0e1517',
+        'editor.lineHighlightBorder': '#0e1517',
+        'editor.selectionBackground': '#1e3a3a',
+        'editorCursor.foreground': '#6df7d1',
+        'editorWidget.background': '#0e1416',
+        'editorWidget.border': '#253033',
+        'editorHoverWidget.background': '#0e1416',
+        'editorHoverWidget.border': '#253033',
       },
     });
   };
@@ -393,66 +399,27 @@ export function EditorPanel({
 
   return (
     <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden bg-background">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <div className="flex items-center gap-1 rounded-md border border-border bg-muted/50 p-1" role="tablist" aria-label="Editor files">
-          <button
-            type="button"
-            onClick={() => setActiveFile('autopilot')}
-            className={`inline-flex h-8 items-center gap-2 rounded px-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
-              activeFile === 'autopilot'
-                ? 'bg-blue-500/10 text-blue-100 shadow-sm ring-1 ring-blue-500/20'
-                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-            }`}
-            role="tab"
-            aria-selected={activeFile === 'autopilot'}
-          >
-            <Code2 size={14} />
-            Autopilot.ts
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveFile('api')}
-            className={`inline-flex h-8 items-center gap-2 rounded px-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
-              activeFile === 'api'
-                ? 'bg-emerald-500/10 text-emerald-100 shadow-sm ring-1 ring-emerald-500/20'
-                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-            }`}
-            role="tab"
-            aria-selected={activeFile === 'api'}
-          >
-            <Braces size={14} />
-            API.d.ts
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveFile('toolbox')}
-            className={`inline-flex h-8 items-center gap-2 rounded px-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition ${
-              activeFile === 'toolbox'
-                ? 'bg-amber-500/10 text-amber-100 shadow-sm ring-1 ring-amber-500/20'
-                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-            }`}
-            role="tab"
-            aria-selected={activeFile === 'toolbox'}
-          >
-            <Wrench size={14} />
-            Toolbox.ts
-          </button>
+      <div className="flex min-h-12 flex-wrap items-center justify-between gap-x-3 border-b border-border pr-3">
+        <div className="flex self-stretch" role="tablist" aria-label="Editor files">
+          <EditorTab active={activeFile === 'autopilot'} onSelect={() => setActiveFile('autopilot')} label="Autopilot.ts" />
+          <EditorTab active={activeFile === 'api'} onSelect={() => setActiveFile('api')} label="API.d.ts" readOnly />
+          <EditorTab active={activeFile === 'toolbox'} onSelect={() => setActiveFile('toolbox')} label="Toolbox.ts" readOnly />
         </div>
         <div className="flex items-center gap-2">
           {isReadOnly ? (
-            <span className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 text-xs font-semibold text-muted-foreground">
-              <LockKeyhole size={13} aria-hidden="true" />
+            <span className="inline-flex h-8 items-center gap-1.5 text-xs text-muted-foreground">
+              <LockKeyhole size={12} aria-hidden="true" />
               Read-only
             </span>
           ) : (
             <>
               {toolbox}
-              <label className="flex items-center gap-2 rounded-md border border-input bg-background px-2 py-1.5 text-xs text-muted-foreground shadow-sm">
-                <FileCode2 size={14} />
+              <label className="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs text-muted-foreground focus-within:ring-1 focus-within:ring-ring">
+                <span className="sr-only">Load example controller</span>
                 <select
                   value={selectedExampleId}
                   onChange={(event) => onLoadExample(event.target.value)}
-                  className="max-w-56 bg-transparent text-foreground outline-none"
+                  className="max-w-56 bg-transparent text-foreground outline-none focus-visible:outline-none"
                 >
                   {!hasSelectedExample ? (
                     <option value={selectedExampleId} className="bg-popover text-popover-foreground">
@@ -491,6 +458,7 @@ export function EditorPanel({
           options={{
             readOnly: isReadOnly,
             minimap: { enabled: false },
+            fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
             fontSize: 13,
             lineHeight: 20,
             fontLigatures: false,
@@ -506,17 +474,44 @@ export function EditorPanel({
         />
       </div>
 
-      <div className="border-t border-border px-4 py-2 text-xs">
+      <div className="flex h-7 items-center gap-2 border-t border-border px-4 text-xs text-muted-foreground">
         {isToolboxActive ? (
-          <span className="text-amber-200">autopilot-toolbox.ts</span>
+          'Helper functions you can call from Autopilot.ts'
         ) : isApiActive ? (
-          <span className="text-emerald-200">autopilot-api.d.ts · public controller interfaces</span>
-        ) : compileErrors.length > 0 ? (
-          <span className="text-red-400">{compileErrors.length} compile issue{compileErrors.length === 1 ? '' : 's'}</span>
+          'Types for the input your controller receives and the output it returns'
         ) : (
-          <span className="text-emerald-400">{codeStatus}</span>
+          <>
+            <span
+              aria-hidden="true"
+              className={`h-1.5 w-1.5 rounded-full ${compileErrors.length > 0 ? 'bg-destructive' : codeStatus === 'Code loaded' ? 'bg-signal' : 'bg-muted-foreground'}`}
+            />
+            {compileErrors.length > 0 ? (
+              <span className="text-destructive">{compileErrors.length} compile issue{compileErrors.length === 1 ? '' : 's'}</span>
+            ) : (
+              codeStatus
+            )}
+          </>
         )}
       </div>
     </section>
+  );
+}
+
+function EditorTab({ active, onSelect, label, readOnly = false }: { active: boolean; onSelect: () => void; label: string; readOnly?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onSelect}
+      className={`relative inline-flex items-center gap-1.5 border-r border-border px-4 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
+        active
+          ? 'bg-card text-foreground after:absolute after:inset-x-0 after:top-0 after:h-px after:bg-signal'
+          : 'text-muted-foreground hover:text-foreground'
+      }`}
+    >
+      {label}
+      {readOnly ? <LockKeyhole size={11} aria-hidden="true" className="opacity-60" /> : null}
+    </button>
   );
 }

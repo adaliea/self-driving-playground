@@ -1,9 +1,10 @@
 import { CircleHelp, Pause, Play, RotateCcw, SlidersHorizontal } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { PlaygroundSettings } from '../types';
 import { Button } from './Button';
 import { NoiseInfoDialog } from './NoiseInfoDialog';
 import { Toggle } from './Toggle';
+import { setColorblindCharts, useColorblindCharts } from './chartStyles';
 
 interface ControlPanelProps {
   running: boolean;
@@ -17,19 +18,20 @@ interface ControlPanelProps {
 export function ControlPanel({ running, settings, onRunningChange, onReset, onResetSettings, onSettingsChange }: ControlPanelProps) {
   const [open, setOpen] = useState(false);
   const [noiseInfoOpen, setNoiseInfoOpen] = useState(false);
+  const colorblindCharts = useColorblindCharts();
   const update = <K extends keyof PlaygroundSettings>(key: K, value: PlaygroundSettings[K]) => {
     onSettingsChange({ ...settings, [key]: value });
   };
 
   return (
-    <section className="relative z-20 border-b border-border bg-background px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="relative z-20 border-b border-border bg-background px-3">
+      <div className="flex min-h-12 flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" onClick={() => onRunningChange(!running)}>
             {running ? <Pause /> : <Play />}
             {running ? 'Pause' : 'Start'}
           </Button>
-          <Button type="button" variant="outline" onClick={onReset}>
+          <Button type="button" variant="ghost" onClick={onReset}>
             <RotateCcw />
             Reset
           </Button>
@@ -37,7 +39,7 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
 
         <Button
           type="button"
-          variant="outline"
+          variant={open ? 'secondary' : 'ghost'}
           onClick={() => setOpen((current) => !current)}
           aria-expanded={open}
         >
@@ -47,17 +49,16 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
       </div>
 
       {open ? (
-        <div className="absolute right-4 top-[calc(100%-0.25rem)] w-[min(28rem,calc(100vw-2rem))] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg">
-          <div className="grid gap-2">
-            <label className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              Seed
+        <div className="absolute right-3 top-[calc(100%-0.25rem)] w-[min(26rem,calc(100vw-1.5rem))] rounded-md border border-input bg-popover p-3 text-popover-foreground shadow-xl shadow-black/50">
+          <div className="grid gap-1">
+            <SettingRow label="Seed">
               <input
                 value={settings.seed}
                 onChange={(event) => update('seed', Number.parseInt(event.target.value, 10) || 0)}
-                className="w-20 bg-transparent text-sm font-semibold tracking-normal text-foreground outline-none"
+                className="h-7 w-24 rounded border border-input bg-background px-2 text-right font-mono text-xs tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 type="number"
               />
-            </label>
+            </SettingRow>
 
             <RangeControl
               label="Traffic"
@@ -78,40 +79,43 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
               onChange={(value) => update('startingSpeed', value)}
             />
 
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Toggle
-                label="Noisy lane lines"
-                checked={settings.noisyLaneLines}
-                onChange={(checked) => update('noisyLaneLines', checked)}
-              />
-              <div className="grid grid-cols-[1fr_auto] items-stretch gap-2">
-                <Toggle
-                  label="Noisy vehicle poses"
-                  checked={settings.noisyVehicles}
-                  onChange={(checked) => update('noisyVehicles', checked)}
-                />
+            <SectionLabel>Sensors and actuation</SectionLabel>
+            <Toggle
+              label="Noisy lane lines"
+              checked={settings.noisyLaneLines}
+              onChange={(checked) => update('noisyLaneLines', checked)}
+            />
+            <Toggle
+              label="Noisy vehicle poses"
+              checked={settings.noisyVehicles}
+              onChange={(checked) => update('noisyVehicles', checked)}
+              accessory={
                 <button
                   type="button"
                   aria-label="Learn how vehicle measurement noise works"
                   title="How does this noise work?"
-                  onClick={() => setNoiseInfoOpen(true)}
-                  className="flex h-full w-7 items-center justify-center rounded border border-border bg-card text-muted-foreground transition hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    setNoiseInfoOpen(true);
+                  }}
+                  className="rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
-                  <CircleHelp size={14} />
+                  <CircleHelp size={13} />
                 </button>
-              </div>
-              <Toggle
-                label="Actuator variation"
-                checked={settings.actuatorVariation}
-                onChange={(checked) => update('actuatorVariation', checked)}
-              />
-              <Toggle
-                label="Debug overlays"
-                checked={settings.debugOverlays}
-                onChange={(checked) => update('debugOverlays', checked)}
-              />
-            </div>
+              }
+            />
+            <Toggle
+              label="Actuator variation"
+              checked={settings.actuatorVariation}
+              onChange={(checked) => update('actuatorVariation', checked)}
+            />
+            <Toggle
+              label="Debug overlays"
+              checked={settings.debugOverlays}
+              onChange={(checked) => update('debugOverlays', checked)}
+            />
 
+            <SectionLabel>Driver assists</SectionLabel>
             <Toggle
               label="Steer for me"
               detail="Lane-centering overrides steering"
@@ -125,11 +129,19 @@ export function ControlPanel({ running, settings, onRunningChange, onReset, onRe
               onChange={(checked) => update('accelerateAssist', checked)}
             />
 
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+            <SectionLabel>Charts</SectionLabel>
+            <Toggle
+              label="Colorblind-friendly charts"
+              detail="Safer colours plus dashed and dotted lines"
+              checked={colorblindCharts}
+              onChange={setColorblindCharts}
+            />
+
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-border px-2 pt-3">
               <div className="text-xs text-muted-foreground">Seed and starting speed apply on reset. Density changes live.</div>
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={onResetSettings}
               >
@@ -157,10 +169,9 @@ interface RangeControlProps {
 
 function RangeControl({ label, value, min, max, step, display, onChange }: RangeControlProps) {
   return (
-    <label className="flex h-9 items-center gap-3 rounded-md border border-input bg-background px-3">
-      <span className="w-20 text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
+    <SettingRow label={label}>
       <input
-        className="h-1 min-w-20 flex-1 accent-primary"
+        className="h-1 min-w-20 flex-1 accent-signal"
         type="range"
         min={min}
         max={max}
@@ -168,9 +179,22 @@ function RangeControl({ label, value, min, max, step, display, onChange }: Range
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-      <span className="w-16 text-right text-xs font-semibold text-foreground">{display}</span>
+      <span className="w-16 text-right font-mono text-xs tabular-nums text-foreground">{display}</span>
+    </SettingRow>
+  );
+}
+
+function SettingRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="flex h-9 items-center gap-3 px-2">
+      <span className="w-24 shrink-0 text-sm text-foreground">{label}</span>
+      <span className="flex flex-1 items-center justify-end gap-3">{children}</span>
     </label>
   );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return <div className="mt-3 border-t border-border px-2 pb-1 pt-3 text-xs text-muted-foreground">{children}</div>;
 }
 
 function estimatedTrafficCount(density: number): number {

@@ -1,10 +1,16 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, Maximize2, Plus, Search, X } from 'lucide-react';
-import { TelemetryChart } from './TelemetryChart';
+import { Check, ExternalLink, Maximize2, Plus, Search, X } from 'lucide-react';
+import { PopoutWindow, openPopoutWindow } from './PopoutWindow';
+import { LineSwatch, TelemetryChart } from './TelemetryChart';
+import { setColorblindCharts, useColorblindCharts } from './chartStyles';
 import type { TelemetryHistory } from './telemetryHistory';
 import type { NamedPidTelemetry } from './pidTelemetry';
 import { defaultSignals, telemetrySamples, telemetrySignals } from './telemetrySignals';
+
+const POPOUT_WINDOW_NAME = 'self-driving-playground-telemetry';
+const iconButton = 'rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
+const quietButton = 'rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
 
 interface GraphTab { id: number; name: string; selected: string[] }
 
@@ -14,12 +20,13 @@ export function TelemetryExplorer({ history, controllers, running }: {
   const dialog = useRef<HTMLDialogElement>(null);
   const headingId = useId();
   const [open, setOpen] = useState(false);
+  const [popout, setPopout] = useState<Window>();
   const [tabs, setTabs] = useState<GraphTab[]>([{ id: 1, name: 'Graph 1', selected: [...defaultSignals] }]);
   const nextId = useRef(2);
   const [activeId, setActiveId] = useState(1);
   const [query, setQuery] = useState('');
-  const [chartHeight, setChartHeight] = useState(480);
   const [frozen, setFrozen] = useState<TelemetryHistory>();
+  const colorblind = useColorblindCharts();
   useEffect(() => {
     if (!open) return;
     const element = dialog.current!;
@@ -48,48 +55,68 @@ export function TelemetryExplorer({ history, controllers, running }: {
     setTabs(remaining);
     if (activeId === id) setActiveId(remaining[0].id);
   };
-  return <>
-    <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground hover:bg-accent focus-visible:outline focus-visible:outline-sky-400">
-      <Maximize2 size={14} /> Explore telemetry
-    </button>
-    {open ? createPortal(<dialog ref={dialog} aria-labelledby={headingId} onCancel={() => setOpen(false)} onClose={() => setOpen(false)}
-      className="fixed inset-0 m-0 h-[100dvh] max-h-none w-screen max-w-none bg-background p-0 text-foreground backdrop:bg-black/80">
+  const closePopout = useCallback(() => setPopout(undefined), []);
+  const popOut = () => {
+    if (popout && !popout.closed) {
+      popout.focus();
+      return;
+    }
+    const target = openPopoutWindow(POPOUT_WINDOW_NAME);
+    if (!target) {
+      // Popup blocked: keep the workspace available in this window instead.
+      setOpen(true);
+      return;
+    }
+    setOpen(false);
+    setPopout(target);
+  };
+  const inWindow = Boolean(popout);
+  const workspace = (
       <div className="flex h-full min-h-0 flex-col">
-        <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-6">
-          <div className="flex items-center gap-3"><Activity size={20} className="text-sky-300" /><div>
-            <h2 id={headingId} className="text-base font-semibold tracking-wide">Telemetry workspace</h2>
-            <p className="mt-1 text-xs text-muted-foreground">Choose signals. Compare behavior. Keep a graph for each question.</p>
-          </div></div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-muted-foreground">{frozen ? 'History held' : running ? 'Live' : 'Simulation paused'}</span>
-            <button type="button" onClick={() => setFrozen((value) => value ? undefined : history)} className="rounded-md border border-border px-3 py-2 text-xs hover:bg-accent">{frozen ? 'Resume live' : 'Hold history'}</button>
-            <button type="button" autoFocus aria-label="Close telemetry" onClick={() => setOpen(false)} className="rounded-md p-2 hover:bg-accent"><X size={20} /></button>
+        <header className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border pl-4 pr-2 sm:pl-6">
+          <h2 id={headingId} className="text-sm font-medium">Telemetry</h2>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${frozen ? 'bg-warning' : running ? 'bg-signal' : 'bg-muted-foreground'}`} />
+              {frozen ? 'History held' : running ? 'Live' : 'Simulation paused'}
+            </span>
+            <button type="button" aria-pressed={colorblind} onClick={() => setColorblindCharts(!colorblind)} className={`${quietButton} ml-2 flex items-center gap-1.5`}>
+              <span aria-hidden="true" className={`flex h-3 w-3 items-center justify-center rounded-sm border ${colorblind ? 'border-signal bg-signal text-signal-foreground' : 'border-muted-foreground'}`}>{colorblind ? <Check size={9} strokeWidth={3} /> : null}</span>
+              Colorblind-friendly
+            </button>
+            <button type="button" onClick={() => setFrozen((value) => value ? undefined : history)} className={quietButton}>{frozen ? 'Resume live' : 'Hold history'}</button>
+            {inWindow ? (
+              <button type="button" aria-label="Close telemetry window" onClick={closePopout} className={iconButton}><X size={16} /></button>
+            ) : <>
+              <button type="button" aria-label="Open telemetry in a new window" title="Open in new window" onClick={popOut} className={iconButton}><ExternalLink size={15} /></button>
+              <button type="button" autoFocus aria-label="Close telemetry" onClick={() => setOpen(false)} className={iconButton}><X size={16} /></button>
+            </>}
           </div>
         </header>
-        <nav aria-label="Graph tabs" className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-4 py-2 sm:px-6">
-          {tabs.map((tab) => <div key={tab.id} className={`flex shrink-0 items-center rounded-md border ${active.id === tab.id ? 'border-sky-400/30 bg-sky-400/10 text-sky-300' : 'border-transparent text-muted-foreground'}`}>
-            <button type="button" aria-pressed={active.id === tab.id} onClick={() => setActiveId(tab.id)} className="max-w-48 truncate px-3 py-2 text-sm">{tab.name || `Graph ${tab.id}`}</button>
-            {tabs.length > 1 ? <button type="button" aria-label={`Remove ${tab.name || `Graph ${tab.id}`}`} onClick={() => removeTab(tab.id)} className="mr-1 rounded p-1 hover:bg-accent"><X size={12} /></button> : null}
+        <nav aria-label="Graph tabs" className="flex h-10 shrink-0 items-stretch overflow-x-auto border-b border-border">
+          {tabs.map((tab) => <div key={tab.id} className={`relative flex shrink-0 items-center border-r border-border ${active.id === tab.id ? 'bg-card text-foreground after:absolute after:inset-x-0 after:top-0 after:h-px after:bg-signal' : 'text-muted-foreground hover:text-foreground'}`}>
+            <button type="button" aria-pressed={active.id === tab.id} onClick={() => setActiveId(tab.id)} className="h-full max-w-48 truncate px-4 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">{tab.name || `Graph ${tab.id}`}</button>
+            {tabs.length > 1 ? <button type="button" aria-label={`Remove ${tab.name || `Graph ${tab.id}`}`} onClick={() => removeTab(tab.id)} className="-ml-2 mr-2 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"><X size={12} /></button> : null}
           </div>)}
-          <button type="button" onClick={addTab} className="flex shrink-0 items-center gap-1 rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-accent"><Plus size={14} /> Add graph</button>
+          <button type="button" onClick={addTab} className="flex shrink-0 items-center gap-1 px-3 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"><Plus size={13} aria-hidden="true" /> Add graph</button>
         </nav>
         <main className="min-h-0 flex-1 overflow-auto lg:flex lg:overflow-hidden">
           <section aria-label="Signal selection" className="shrink-0 border-b border-border p-4 lg:w-72 lg:overflow-y-auto lg:border-b-0 lg:border-r">
             <details open className="group">
-              <summary className="cursor-pointer text-sm font-semibold">Signals <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">{selected.length} / {signals.length}</span></summary>
-              <label className="mt-4 flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2"><Search size={14} className="text-muted-foreground" />
+              <summary className="cursor-pointer text-sm font-medium">Signals <span className="ml-1 font-mono text-xs font-normal tabular-nums text-muted-foreground">{selected.length}/{signals.length}</span></summary>
+              <label className="mt-3 flex h-8 items-center gap-2 rounded-md border border-input px-2.5 focus-within:ring-1 focus-within:ring-ring"><Search size={13} className="text-muted-foreground" aria-hidden="true" />
                 <input aria-label="Find a signal" placeholder="Find a signal…" value={query} onChange={(event) => setQuery(event.target.value)} className="w-full min-w-0 bg-transparent text-xs outline-none" />
               </label>
-              <div className="my-3 flex gap-3 text-xs">
-                <button type="button" onClick={() => updateTab({ selected: signals.map((signal) => signal.key) })} className="text-sky-300">Select all</button>
-                <button type="button" onClick={() => updateTab({ selected: [] })} className="text-muted-foreground">Clear all</button>
+              <div className="my-2 flex gap-1 text-xs">
+                <button type="button" onClick={() => updateTab({ selected: signals.map((signal) => signal.key) })} className={quietButton}>Select all</button>
+                <button type="button" onClick={() => updateTab({ selected: [] })} className={quietButton}>Clear</button>
               </div>
-              <div className="max-h-56 space-y-5 overflow-y-auto lg:max-h-none">
+              <div className="max-h-56 space-y-4 overflow-y-auto lg:max-h-none">
                 {groups.map((group) => <fieldset key={group}>
-                  <legend className="mb-2 text-[10px] uppercase tracking-widest text-muted-foreground">{group}</legend>
-                  <div className="space-y-1">{visible.filter((signal) => signal.group === group).map((signal) => <label key={signal.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent">
-                    <input type="checkbox" checked={active.selected.includes(signal.key)} onChange={() => toggle(signal.key)} className="accent-sky-400" />
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: signal.color }} />
+                  <legend className="mb-1 px-2 text-xs text-muted-foreground">{group}</legend>
+                  <div>{visible.filter((signal) => signal.group === group).map((signal) => <label key={signal.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent">
+                    <input type="checkbox" checked={active.selected.includes(signal.key)} onChange={() => toggle(signal.key)} className="accent-signal" />
+                    <LineSwatch series={signal} colorblind={colorblind} />
                     <span>{signal.label}</span>
                   </label>)}</div>
                 </fieldset>)}
@@ -97,21 +124,36 @@ export function TelemetryExplorer({ history, controllers, running }: {
               </div>
             </details>
           </section>
-          <section aria-label="Selected graph" className="min-w-0 flex-1 p-4 lg:overflow-y-auto lg:p-6">
+          <section aria-label="Selected graph" className="flex min-w-0 flex-1 flex-col p-4 lg:min-h-0 lg:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <input aria-label="Graph name" maxLength={60} value={active.name} placeholder={`Graph ${active.id}`} onChange={(event) => updateTab({ name: event.target.value })} className="min-w-0 max-w-full rounded border border-transparent bg-transparent px-2 py-1 text-lg font-semibold hover:border-border focus:border-sky-400 focus:outline-none" />
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">Height
-                <input aria-label="Graph height" type="range" min={300} max={900} step={20} value={chartHeight} onChange={(event) => setChartHeight(Number(event.target.value))} className="w-24 accent-sky-400" />
-              </label>
+              <input aria-label="Graph name" maxLength={60} value={active.name} placeholder={`Graph ${active.id}`} onChange={(event) => updateTab({ name: event.target.value })} className="-ml-2 min-w-0 max-w-full rounded border border-transparent bg-transparent px-2 py-1 text-base font-medium hover:border-border focus:border-ring focus:outline-none" />
             </div>
-            <div className="rounded-lg border border-border bg-card p-2 sm:p-4">
-              {selected.length ? <TelemetryChart key={`${data.version}:${active.id}`} name={active.name} history={telemetrySamples(data)} series={selected} height={chartHeight}
-                note="Scroll to zoom · Drag to pan · Hold history to inspect a fixed time range" /> : <div style={{ height: chartHeight }} className="flex items-center justify-center p-6 text-center text-sm text-muted-foreground">Select signals to build this graph. Speed, outputs, and PID terms can be combined here.</div>}
+            <div className="flex min-h-[22rem] flex-1 flex-col rounded-md border border-border p-2 sm:p-4">
+              {selected.length ? <TelemetryChart key={`${data.version}:${active.id}`} name={active.name} history={telemetrySamples(data)} series={selected} height="fill"
+                note="Scroll to zoom · Drag to pan · Hold history to inspect a fixed time range" /> : <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">Select signals to build this graph. Speed, outputs, and PID terms can be combined here.</div>}
             </div>
             <p className="mt-3 text-xs text-muted-foreground">30 seconds of simulation time. Signals use separate scales by unit; hover for values. Lead signals track the nearest vehicle ahead in your lane. Positive relative forward velocity means the gap is opening.</p>
           </section>
         </main>
       </div>
+  );
+  return <>
+    <div className="flex items-center">
+      <button type="button" onClick={() => popout ? popout.focus() : setOpen(true)} className="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+        <Maximize2 size={13} aria-hidden="true" /> {popout ? 'Show telemetry window' : 'Explore telemetry'}
+      </button>
+      {popout ? null : (
+        <button type="button" aria-label="Open telemetry in a new window" title="Open in new window" onClick={popOut} className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+          <ExternalLink size={13} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+    {open && !popout ? createPortal(<dialog ref={dialog} aria-labelledby={headingId} onCancel={() => setOpen(false)} onClose={() => setOpen(false)}
+      className="fixed inset-0 m-0 h-[100dvh] max-h-none w-screen max-w-none bg-background p-0 text-foreground backdrop:bg-black/80">
+      {workspace}
     </dialog>, document.body) : null}
+    {popout ? <PopoutWindow target={popout} title="Telemetry – PID Autopilot Playground" onClose={closePopout}>
+      <div className="h-full bg-background text-foreground">{workspace}</div>
+    </PopoutWindow> : null}
   </>;
 }
