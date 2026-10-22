@@ -201,7 +201,6 @@ export function HostView() {
             atFaultPenalty: RACE_SCORING.atFaultPenalty,
             time: now / 1000,
             centerX,
-            cameraS: camera.centerS,
           });
         }
       }

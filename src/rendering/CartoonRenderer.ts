@@ -18,8 +18,6 @@ export interface CartoonFrame {
   time: number;
   /** Screen x of the camera center in CSS pixels. Defaults to the middle of the canvas. */
   centerX?: number;
-  /** Road station at the camera center, used to scroll ground decoration with the road. */
-  cameraS?: number;
 }
 
 interface ScreenPoint {
@@ -31,6 +29,9 @@ const OUTLINE = '#1d1b2e';
 const GRASS = '#7fd35a';
 const GRASS_STRIPE = '#74c851';
 const ASPHALT = '#565d6e';
+/** Spacing of the road surface samples in the snapshot. */
+const SURFACE_SAMPLE_METERS = 5;
+const MOWING_STRIPE_METERS = 20;
 const IMPACT_WORDS = ['POW!', 'BAM!', 'CRUNCH!', 'BONK!', 'WHAM!', 'KABLAM!', 'SMASH!'];
 const TRAFFIC_TINTS = ['#c9d6e8', '#f4e3c1', '#d9c8f0', '#c6ecd9', '#f2cfcf', '#e6e6e6'];
 export const CARTOON_FONT = '"Arial Rounded MT Bold", "Nunito", "Trebuchet MS", ui-rounded, system-ui, sans-serif';
@@ -111,22 +112,52 @@ export class CartoonRenderer {
 
   private drawGrass(): void {
     const ctx = this.ctx;
-    const { camera } = this.frame!.snapshot;
-    const scale = this.frame!.scale;
+    const { road } = this.frame!.snapshot;
     ctx.fillStyle = GRASS;
     ctx.fillRect(0, 0, this.width, this.height);
 
-    // Mowing stripes are fixed to road distance so they scroll with the camera, even through curves.
-    const stripe = 24;
-    const cameraForward =
-      this.frame!.cameraS ?? Math.sin(camera.heading) * camera.x + Math.cos(camera.heading) * camera.y;
-    const first = Math.floor((cameraForward - this.centerX / scale) / stripe);
-    const last = Math.ceil((cameraForward + (this.width - this.centerX) / scale) / stripe);
+    // Mowing stripes are bands of road distance swept outward along the road normal, so they bend with
+    // curves and stay put on the ground. Boundary samples are SURFACE_SAMPLE_METERS apart from a station
+    // that is a multiple of MOWING_STRIPE_METERS.
+    const left = road.surface.left;
+    const right = road.surface.right;
+    const count = Math.min(left.length, right.length);
+    if (count < 2) return;
+    const startS = road.lines[0]?.dashOffsetMeters ?? 0;
+    const reach = Math.hypot(this.width, this.height) / this.frame!.scale;
+    const normals = Array.from({ length: count }, (_, index) => {
+      const dx = left[index].x - right[index].x;
+      const dy = left[index].y - right[index].y;
+      const length = Math.hypot(dx, dy) || 1;
+      return { x: dx / length, y: dy / length };
+    });
+    const leftReach = sweepReach(left, normals, 1, reach);
+    const rightReach = sweepReach(right, normals, -1, reach);
+
+    const samplesPerStripe = MOWING_STRIPE_METERS / SURFACE_SAMPLE_METERS;
+    const firstStripe = Math.round(startS / MOWING_STRIPE_METERS);
     ctx.fillStyle = GRASS_STRIPE;
-    for (let index = first; index <= last; index += 1) {
-      if (index % 2 !== 0) continue;
-      const x = this.centerX + (index * stripe - cameraForward) * scale;
-      ctx.fillRect(x, 0, stripe * scale, this.height);
+    for (let first = 0; first < count - 1; first += samplesPerStripe) {
+      if ((firstStripe + first / samplesPerStripe) % 2 !== 0) continue;
+      const last = Math.min(count - 1, first + samplesPerStripe);
+      ctx.beginPath();
+      for (let index = first; index <= last; index += 1) {
+        const point = this.worldToScreen({
+          x: left[index].x + normals[index].x * leftReach[index],
+          y: left[index].y + normals[index].y * leftReach[index],
+        });
+        if (index === first) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      }
+      for (let index = last; index >= first; index -= 1) {
+        const point = this.worldToScreen({
+          x: right[index].x - normals[index].x * rightReach[index],
+          y: right[index].y - normals[index].y * rightReach[index],
+        });
+        ctx.lineTo(point.x, point.y);
+      }
+      ctx.closePath();
+      ctx.fill();
     }
   }
 
@@ -444,6 +475,31 @@ function drawBush(ctx: CanvasRenderingContext2D, at: ScreenPoint, size: number):
   ctx.beginPath();
   ctx.arc(at.x, at.y - size * 0.2, size * 0.14, 0, Math.PI * 2);
   ctx.fill();
+}
+
+/**
+ * How far each boundary sample can be pushed along `side * normal` before neighbouring offsets cross,
+ * which happens on the inside of a curve once the offset passes the turn's center.
+ */
+function sweepReach(points: RenderPoint[], normals: ScreenPoint[], side: number, maxReach: number): number[] {
+  const segmentLimits = points.slice(1).map((point, index) => {
+    const along = { x: point.x - points[index].x, y: point.y - points[index].y };
+    const turn = {
+      x: side * (normals[index + 1].x - normals[index].x),
+      y: side * (normals[index + 1].y - normals[index].y),
+    };
+    const converging = -(along.x * turn.x + along.y * turn.y);
+    return converging > 0 ? (0.8 * (along.x * along.x + along.y * along.y)) / converging : maxReach;
+  });
+  // Take the tightest limit nearby so the stripe edge eases in instead of stepping.
+  const window = 6;
+  return points.map((_, index) => {
+    let reach = maxReach;
+    const from = Math.max(0, index - window);
+    const to = Math.min(segmentLimits.length - 1, index + window);
+    for (let segment = from; segment <= to; segment += 1) reach = Math.min(reach, segmentLimits[segment]);
+    return reach;
+  });
 }
 
 function tracePolyline(ctx: CanvasRenderingContext2D, points: ScreenPoint[]): void {
