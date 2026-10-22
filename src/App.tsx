@@ -222,11 +222,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
 
         while (accumulator >= FIXED_TIMESTEP && steps < 3 && !disposed) {
           const input = simulation.createEgoInput(settingsSnapshot, FIXED_TIMESTEP);
-          let output: unknown = {
-            motor: 0,
-            steering: 0,
-            targetLane: input.targetLane,
-          };
+          let output: unknown = { motor: 0, steering: 0 };
 
           if (codeLoadedRef.current && sandboxRef.current) {
             try {
@@ -239,11 +235,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
               }
             } catch (error) {
               const message = formatRunnerError(error);
-              output = {
-                motor: 0,
-                steering: 0,
-                targetLane: input.targetLane,
-              };
+              output = { motor: 0, steering: 0 };
               if (runtimeErrorRef.current !== message) {
                 runtimeErrorRef.current = message;
                 setRuntimeError(message);

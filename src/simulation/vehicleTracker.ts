@@ -33,7 +33,6 @@ interface TrackState {
   width: ScalarState;
   length: ScalarState;
   confidence: number;
-  laneIndex?: number;
   age: number;
   timeSinceMeasurement: number;
   isPredicted: boolean;
@@ -106,7 +105,6 @@ export class VehicleTracker {
     updateScalar(track.length, measurement.length, lengthStdDev ** 2);
 
     track.confidence = clamp(track.confidence * 0.58 + measurement.confidence * 0.42, 0, 1);
-    track.laneIndex = measurement.laneIndex;
     track.timeSinceMeasurement = 0;
     track.isPredicted = false;
   }
@@ -126,7 +124,6 @@ function initializeTrack(measurement: VehicleMeasurement, dt: number): TrackStat
     width: { value: measurement.width, variance: widthStdDev ** 2 },
     length: { value: measurement.length, variance: lengthStdDev ** 2 },
     confidence: measurement.confidence,
-    laneIndex: measurement.laneIndex,
     age: dt,
     timeSinceMeasurement: 0,
     isPredicted: false,
@@ -199,7 +196,6 @@ function toVehicleTrack(track: TrackState): VehicleTrack {
     width: track.width.value,
     length: track.length.value,
     confidence: clamp(track.confidence, 0, 1),
-    laneIndex: track.laneIndex,
     age: track.age,
     timeSinceMeasurement: track.timeSinceMeasurement,
     isPredicted: track.isPredicted,

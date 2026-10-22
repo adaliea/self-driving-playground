@@ -1,14 +1,70 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP } from './defaults';
 import { Simulation } from './simulation';
+import type { Road } from './road';
 import type { VehicleState } from './vehicle';
 
 interface SimulationInternals {
   vehicles: VehicleState[];
+  road: Road;
   time: number;
   resolveCloseVehicles(): void;
   vehicleContact(a: VehicleState, b: VehicleState): { normal: { x: number; y: number }; penetration: number } | undefined;
 }
+
+describe('collision blame for players', () => {
+  function sideswipe(egoLateral: number, egoSettledLane: number, trafficLateral: number, trafficLane: number) {
+    const simulation = new Simulation(DEFAULT_SETTINGS);
+    const internals = simulation as unknown as SimulationInternals;
+    const ego = internals.vehicles.find((vehicle) => vehicle.kind === 'ego')!;
+    ego.lateral = egoLateral;
+    ego.laneIndex = internals.road.getLaneIndex(egoLateral);
+    ego.settledLane = egoSettledLane;
+    ego.headingOffset = 0;
+    const traffic = collisionVehicle('traffic-test', 'traffic', ego.s + 0.08, trafficLateral);
+    traffic.laneIndex = trafficLane;
+    traffic.targetLane = trafficLane;
+    internals.vehicles = [ego, traffic];
+    internals.resolveCloseVehicles();
+    const event = simulation.getSnapshot(DEFAULT_SETTINGS).collisionEvents[0];
+    expect(event.kind).toBe('sideswipe');
+    return event.faultVehicleId;
+  }
+
+  it('blames a player who crossed into a lane without settling there', () => {
+    const road = new Simulation(DEFAULT_SETTINGS) as unknown as SimulationInternals;
+    const laneOne = road.road.getLaneCenterOffset(1);
+    // Ego's center is past the line into lane 1, but it was last settled in lane 0.
+    expect(sideswipe(laneOne - 1.8, 0, laneOne, 1)).toBe('ego');
+  });
+
+  it('blames traffic that drifts into a player settled in its lane', () => {
+    const road = new Simulation(DEFAULT_SETTINGS) as unknown as SimulationInternals;
+    const laneZero = road.road.getLaneCenterOffset(0);
+    expect(sideswipe(laneZero, 0, laneZero + 1.8, 1)).toBe('traffic-test');
+  });
+
+  it('settles a player into a lane only once centered and aligned in it', () => {
+    const settings = { ...DEFAULT_SETTINGS, trafficDensity: 0 };
+    const simulation = new Simulation(settings);
+    const internals = simulation as unknown as SimulationInternals;
+    const ego = internals.vehicles.find((vehicle) => vehicle.kind === 'ego')!;
+    internals.vehicles = [ego];
+    const laneOne = internals.road.getLaneCenterOffset(1);
+
+    ego.settledLane = 0;
+    ego.lateral = laneOne - 1;
+    ego.headingOffset = 0;
+    simulation.step(FIXED_TIMESTEP, { motor: 0, steering: 0 }, settings);
+    expect(ego.laneIndex).toBe(1);
+    expect(ego.settledLane).toBe(0);
+
+    ego.lateral = laneOne;
+    ego.headingOffset = 0;
+    simulation.step(FIXED_TIMESTEP, { motor: 0, steering: 0 }, settings);
+    expect(ego.settledLane).toBe(1);
+  });
+});
 
 describe('collision feedback events', () => {
   it('latches an ego sideswipe long enough to render after contact ends', () => {
@@ -275,7 +331,7 @@ describe('axis-aware collision response', () => {
       const input = simulation.createEgoInput(settings, FIXED_TIMESTEP);
       simulation.step(
         FIXED_TIMESTEP,
-        { motor: 1, steering: 0, targetLane: input.targetLane },
+        { motor: 1, steering: 0 },
         settings,
       );
     }
@@ -313,7 +369,7 @@ describe('axis-aware collision response', () => {
       const input = simulation.createEgoInput(settings, FIXED_TIMESTEP);
       simulation.step(
         FIXED_TIMESTEP,
-        { motor: 1, steering: 0, targetLane: input.targetLane },
+        { motor: 1, steering: 0 },
         settings,
       );
       if (simulation.getDebugState().collisions > 0) {

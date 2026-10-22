@@ -24,6 +24,9 @@ const TRAFFIC_BACK_BUFFER = 250;
 const TRAFFIC_FRONT_BUFFER = 820;
 const TRAFFIC_MIN_SPAWN_GAP = 10;
 const TRAFFIC_MAX_SCALED_COUNT = 240;
+// A player counts as settled in a lane, for collision blame, once this close to its center and this aligned with the road.
+const SETTLED_LANE_OFFSET = 0.42;
+const SETTLED_LANE_HEADING = 0.07;
 const COLLISION_POSITION_SLOP = 0.015;
 const COLLISION_MAX_CORRECTION = 0.55;
 const COLLISION_FEEDBACK_DURATION = 0.95;
@@ -189,6 +192,7 @@ export class Simulation {
         speed: settings.startingSpeed,
         laneIndex: lane,
         targetLane: lane,
+        settledLane: lane,
         desiredSpeed: 29,
         width: 2.05,
         length: 4.65,
@@ -203,8 +207,8 @@ export class Simulation {
       this.playerRuntimes.set(player.id, {
         id: player.id,
         startS: s,
-        lastApplied: idleAppliedControls(lane),
-        lastUserOutput: { motor: 0, steering: 0, targetLane: lane, invalidFields: [] },
+        lastApplied: idleAppliedControls(),
+        lastUserOutput: { motor: 0, steering: 0, invalidFields: [] },
         collisions: 0,
         atFaultCollisions: 0,
         stallUntil: 0,
@@ -243,8 +247,7 @@ export class Simulation {
     for (const runtime of this.playerRuntimes.values()) {
       const ego = this.playerVehicle(runtime.id);
       const input = runtime.lastInput ?? this.createPlayerInput(runtime.id, settings, dt);
-      const user = sanitizeAutopilotOutput(rawOutputs.get(runtime.id), ego.targetLane, this.road.laneCount);
-      ego.targetLane = user.targetLane;
+      const user = sanitizeAutopilotOutput(rawOutputs.get(runtime.id));
 
       const stalled = runtime.stallUntil > this.time;
       const finalOutput: SanitizedAutopilotOutput = {
@@ -255,10 +258,11 @@ export class Simulation {
             ? builtInAssistSpeedControl(input, Math.max(ego.desiredSpeed, 31))
             : user.motor,
         steering: settings.steerAssist ? builtInAssistLaneKeeping(input) : user.steering,
-        targetLane: user.targetLane,
       };
 
       applyVehiclePhysics(ego, this.road, finalOutput, dt, this.rng, settings.actuatorVariation);
+      ego.targetLane = ego.laneIndex;
+      ego.settledLane = this.settledLaneOf(ego);
       runtime.lastUserOutput = user;
       runtime.lastApplied = {
         userMotor: user.motor,
@@ -267,7 +271,6 @@ export class Simulation {
         finalSteering: finalOutput.steering,
         actualMotor: ego.actualMotor,
         actualSteering: ego.actualSteering,
-        targetLane: ego.targetLane,
         steerOverridden: settings.steerAssist,
         motorOverridden: settings.accelerateAssist || stalled,
         invalidFields: user.invalidFields,
@@ -279,11 +282,11 @@ export class Simulation {
       vehicle.laneChangeCooldown = Math.max(0, vehicle.laneChangeCooldown - dt);
       const input = this.sensors.createTrafficInput(vehicle, this.vehicles, this.road, this.rng, dt);
       const trafficRaw = trafficAutopilot(vehicle, input, this.road.laneCount);
-      const traffic = sanitizeAutopilotOutput(trafficRaw, vehicle.targetLane, this.road.laneCount);
-      vehicle.targetLane = traffic.targetLane;
+      const traffic = sanitizeAutopilotOutput(trafficRaw);
+      vehicle.targetLane = clamp(Math.round(trafficRaw.targetLane), 0, this.road.laneCount - 1);
       const finalTraffic = {
         ...traffic,
-        steering: builtInLaneCentering(vehicle, this.road, traffic.targetLane),
+        steering: builtInLaneCentering(vehicle, this.road, vehicle.targetLane),
       };
       applyVehiclePhysics(vehicle, this.road, finalTraffic, dt, this.rng, settings.actuatorVariation);
     }
@@ -365,7 +368,6 @@ export class Simulation {
         speed: focus.speed,
         speedMph: metersPerSecondToMph(focus.speed),
         laneIndex: focus.laneIndex,
-        targetLane: focus.targetLane,
         userMotor: runtime.lastApplied.userMotor,
         userSteering: runtime.lastApplied.userSteering,
         finalMotor: runtime.lastApplied.finalMotor,
@@ -415,7 +417,7 @@ export class Simulation {
   }
 
   private getLeadVehicleTelemetry(input: AutopilotInput) {
-    const lead = closestVehicleAhead(input.vehicles, input.ego.laneIndex);
+    const lead = closestVehicleAhead(input.vehicles, input.laneLines);
     if (!lead) return undefined;
     return {
       id: lead.id,
@@ -740,8 +742,17 @@ export class Simulation {
 
   private laneDriftToward(vehicle: VehicleState, other: VehicleState): number {
     const direction = Math.sign(other.lateral - vehicle.lateral) || 1;
-    const laneCenter = this.road.getLaneCenterOffset(vehicle.targetLane);
+    // Traffic declares the lane it is heading for; players are judged from the lane they last settled in.
+    const lane = vehicle.kind === 'ego' ? vehicle.settledLane ?? vehicle.laneIndex : vehicle.targetLane;
+    const laneCenter = this.road.getLaneCenterOffset(lane);
     return (vehicle.lateral - laneCenter) * direction;
+  }
+
+  /** The vehicle's current lane once it is centered and aligned in it, otherwise its previous settled lane. */
+  private settledLaneOf(vehicle: VehicleState): number {
+    const centered = Math.abs(vehicle.lateral - this.road.getLaneCenterOffset(vehicle.laneIndex)) < SETTLED_LANE_OFFSET;
+    const aligned = Math.abs(vehicle.headingOffset) < SETTLED_LANE_HEADING;
+    return centered && aligned ? vehicle.laneIndex : vehicle.settledLane ?? vehicle.laneIndex;
   }
 
   private vehicleContact(a: VehicleState, b: VehicleState, margin = 0): CollisionContact | undefined {
@@ -1006,7 +1017,7 @@ function lateralSpeedToward(vehicle: VehicleState, other: VehicleState): number 
   return vehicle.speed * Math.sin(vehicle.headingOffset) * direction;
 }
 
-function idleAppliedControls(targetLane: number): AppliedControls {
+function idleAppliedControls(): AppliedControls {
   return {
     userMotor: 0,
     userSteering: 0,
@@ -1014,7 +1025,6 @@ function idleAppliedControls(targetLane: number): AppliedControls {
     finalSteering: 0,
     actualMotor: 0,
     actualSteering: 0,
-    targetLane,
     steerOverridden: false,
     motorOverridden: false,
     invalidFields: [],

@@ -4,6 +4,7 @@ import {
   clampImplementation,
   curveRegressionImplementation,
   laneInterpretationImplementation,
+  laneSelectionImplementation,
   pidControllerImplementation,
   vehicleFilteringImplementation,
   vehicleTrackerImplementation,
@@ -38,7 +39,7 @@ const safeMotor = clamp(motor, -1, 1);`,
 
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   const myTracks = tracker.update(input.vehicleMeasurements, input.dt);
-  const lead = closestVehicleAhead(myTracks, input.ego.laneIndex);
+  const lead = closestVehicleAhead(myTracks, input.laneLines);
   // Compare myTracks with the built-in input.vehicles tracks.
   return { motor: lead && lead.relativeY < 25 ? -0.2 : 0.3, steering: 0 };
 }`,
@@ -47,9 +48,9 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     id: 'vehicle-filtering',
     title: 'Vehicle Filtering',
     category: 'Perception',
-    description: 'Find vehicles in a lane and pick the closest one ahead for following-distance control.',
+    description: 'Find vehicles whose bounding box overlaps a lane and pick the closest one ahead for following-distance control.',
     implementation: vehicleFilteringImplementation,
-    usage: `const leadVehicle = closestVehicleAhead(input.vehicles, input.ego.laneIndex);
+    usage: `const leadVehicle = closestVehicleAhead(input.vehicles, input.laneLines);
 const gapMeters = leadVehicle?.relativeY ?? Number.POSITIVE_INFINITY;`,
   },
   {
@@ -95,7 +96,7 @@ const motor = accelerationFeedforward(targetSpeed, input.ego.speed);`,
     description:
       'Estimates local lane geometry for steering; supports a longer preview for speed planning.',
     implementation: curveRegressionImplementation,
-    usage: `const lane = analyzeTargetLane(input);
+    usage: `const lane = analyzeLaneRegression(input.laneLines);
 const laneError = lane.centerOffset + lane.heading * 2.0;
 const feedback = lanePid.update(laneError, input.dt);
 const feedforward = curvatureSteeringFeedforward(lane, input.ego.speed);
@@ -109,5 +110,21 @@ const steering = clamp(feedback + feedforward, -1, 1);`,
     implementation: adaptiveCruiseImplementation,
     usage: `const targetSpeed = adaptiveCruiseTargetSpeed(input, 29);
 const motor = speedPid.update(targetSpeed - input.ego.speed, input.dt);`,
+  },
+  {
+    id: 'fastest-lane',
+    title: 'Fastest Lane Selection',
+    category: 'Planning',
+    description: 'Picks an adjacent lane whose traffic is faster by at least a minimum speed differential, and holds it until the lane change finishes.',
+    implementation: laneSelectionImplementation,
+    usage: `// Only switch when the other lane is at least 3 m/s faster.
+const laneChooser = createLaneChooser({ minSpeedGain: 3 });
+
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  const relativeLane = laneChooser.update(input);
+  const lane = analyzeLaneRegression(input.laneLines, relativeLane);
+  const targetSpeed = adaptiveCruiseTargetSpeed(input, 29, relativeLane);
+  // ...steer on lane.centerOffset and lane.heading as usual.
+}`,
   },
 ];

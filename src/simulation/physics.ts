@@ -20,7 +20,6 @@ export function applyVehiclePhysics(
 ): void {
   vehicle.commandMotor = output.motor;
   vehicle.commandSteering = output.steering;
-  vehicle.targetLane = output.targetLane;
 
   const motorNoise = actuatorVariation ? rng.range(-0.035, 0.035) : 0;
   const steeringNoise = actuatorVariation ? rng.range(-0.025, 0.025) : 0;

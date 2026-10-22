@@ -29,29 +29,29 @@ interface LaneCenterFit {
   confidence: number;
 }
 
-export function sanitizeAutopilotOutput(
-  rawOutput: unknown,
-  fallbackTargetLane: number,
-  laneCount: number,
-): SanitizedAutopilotOutput {
+/** Sensor snapshot for traffic, which unlike players steers toward a declared lane. */
+export interface TrafficAutopilotInput extends AutopilotInput {
+  targetLane: number;
+}
+
+export interface TrafficAutopilotOutput extends AutopilotOutput {
+  targetLane: number;
+}
+
+export function sanitizeAutopilotOutput(rawOutput: unknown): SanitizedAutopilotOutput {
   const invalidFields: string[] = [];
   const raw = isRecord(rawOutput) ? rawOutput : {};
   if (!isRecord(rawOutput)) invalidFields.push('output');
 
   const rawMotor = raw.motor;
   const rawSteering = raw.steering;
-  const rawTargetLane = raw.targetLane;
 
   if (typeof rawMotor !== 'number' || !Number.isFinite(rawMotor)) invalidFields.push('motor');
   if (typeof rawSteering !== 'number' || !Number.isFinite(rawSteering)) invalidFields.push('steering');
-  if (rawTargetLane !== undefined && (typeof rawTargetLane !== 'number' || !Number.isFinite(rawTargetLane))) {
-    invalidFields.push('targetLane');
-  }
 
   return {
     motor: clamp(finiteOr(rawMotor, 0), -1, 1),
     steering: clamp(finiteOr(rawSteering, 0), -1, 1),
-    targetLane: clamp(Math.round(finiteOr(rawTargetLane, fallbackTargetLane)), 0, laneCount - 1),
     debug: sanitizeDebug(raw.debug),
     invalidFields,
   };
@@ -105,13 +105,12 @@ export function builtInLaneCentering(vehicle: VehicleState, road: Road, targetLa
 }
 
 export function builtInAssistLaneKeeping(input: AutopilotInput): number {
-  const lane = analyzeLaneDetectionsForTarget(input.laneLines, input.targetLane - input.ego.laneIndex);
+  const lane = analyzeLaneDetections(input.laneLines);
   if (lane.confidence < 0.18) return clamp(-input.ego.heading * 1.1, -0.55, 0.55);
 
   const speed = Math.max(1, input.ego.speed);
   const centerOffset = clamp(lane.centerOffset, -2.3, 2.3);
   const laneExitRecovery =
-    input.ego.laneIndex !== input.targetLane ||
     Math.abs(centerOffset) + ASSIST_EGO_HALF_WIDTH > ROAD_LANE_WIDTH / 2 - LANE_BODY_RECOVERY_MARGIN;
   const lateralVelocityLimit = laneExitRecovery ? 2.35 : 1.5;
   const lateralVelocityGain = laneExitRecovery ? 1.28 : 1.05;
@@ -129,31 +128,10 @@ export function builtInAssistLaneKeeping(input: AutopilotInput): number {
   return clamp(headingCorrection + lateralVelocityCorrection + curvatureFeedforward, -1, 1);
 }
 
-export function builtInSpeedControl(input: AutopilotInput, desiredSpeed = 29): number {
-  const closest = closestVehicleAhead(input.vehicles, input.targetLane);
-  let targetSpeed = desiredSpeed;
-  let gapBrake = 0;
-
-  if (closest) {
-    const frontSpeed = input.ego.speed + closest.relativeVy;
-    const desiredGap = 12 + input.ego.speed * 1.55;
-    const gapError = closest.relativeY - desiredGap;
-    if (gapError < 24) {
-      targetSpeed = Math.min(targetSpeed, Math.max(3, frontSpeed + gapError * 0.46));
-    }
-    if (gapError < 0) gapBrake = gapError * 0.12;
-  }
-
-  const speedError = targetSpeed - input.ego.speed;
-  const feedforward = accelerationFeedforward(targetSpeed, input.ego.speed);
-  return clamp(feedforward + speedError * 0.09 + gapBrake, -1, 1);
-}
-
 export function builtInAssistSpeedControl(input: AutopilotInput, desiredSpeed = 31): number {
-  const closest = closestVehicleAhead(input.vehicles, input.targetLane);
-  const relativeTargetLane = input.targetLane - input.ego.laneIndex;
-  const lane = analyzeLaneDetectionsForTarget(input.laneLines, relativeTargetLane, 'preview');
-  const previewCurvature = previewLaneCurvatureForTarget(input.laneLines, relativeTargetLane);
+  const closest = closestVehicleAhead(input.vehicles, input.laneLines);
+  const lane = analyzeLaneDetections(input.laneLines, 'preview');
+  const previewCurvature = previewLaneCurvatureForTarget(input.laneLines, 0);
   let targetSpeed = desiredSpeed;
   let gapBrake = 0;
 
@@ -187,11 +165,11 @@ export function builtInAssistSpeedControl(input: AutopilotInput, desiredSpeed = 
   return clamp(feedforward + speedError * 0.105 + gapBrake, -1, 1);
 }
 
-export function trafficAutopilot(vehicle: VehicleState, input: AutopilotInput, laneCount: number): AutopilotOutput {
+export function trafficAutopilot(vehicle: VehicleState, input: TrafficAutopilotInput, laneCount: number): TrafficAutopilotOutput {
   const personality = vehicle.personality ?? DEFAULT_TRAFFIC_PERSONALITY;
   const currentTarget = clamp(vehicle.targetLane, 0, laneCount - 1);
   let targetLane = currentTarget;
-  const closest = closestVehicleAhead(input.vehicles, currentTarget);
+  const closest = closestVehicleAhead(input.vehicles, input.laneLines, currentTarget - input.ego.laneIndex);
   const stableForLaneChange =
     input.ego.laneIndex === currentTarget && Math.abs(vehicle.headingOffset) < 0.07 && Math.abs(vehicle.actualSteering) < 0.35;
 
@@ -282,10 +260,105 @@ function analyzeLaneBoundaries(leftSamples: LaneLineSample[], rightSamples: Lane
   };
 }
 
-export function closestVehicleAhead(vehicles: VehicleDetection[], laneIndex: number): VehicleDetection | undefined {
-  return vehicles
-    .filter((vehicle) => vehicle.laneIndex === laneIndex && vehicle.relativeY > 0)
-    .sort((a, b) => a.relativeY - b.relativeY)[0];
+export function closestVehicleAhead(
+  vehicles: VehicleDetection[],
+  laneLines: LaneLineDetections,
+  relativeLane = 0,
+): VehicleDetection | undefined {
+  let closest: VehicleDetection | undefined;
+  for (const vehicle of vehicles) {
+    // The lane test is the costly part, so skip anything that couldn't be closer.
+    if (vehicle.relativeY <= 0 || (closest && vehicle.relativeY >= closest.relativeY)) continue;
+    if (isVehicleInLane(vehicle, laneLines, relativeLane)) closest = vehicle;
+  }
+  return closest;
+}
+
+/**
+ * True when any part of the vehicle's footprint overlaps the lane `relativeLane`
+ * lanes to the right of ego's lane (-1 left, 0 ego's lane, 1 right).
+ */
+export function isVehicleInLane(vehicle: VehicleDetection, laneLines: LaneLineDetections, relativeLane = 0): boolean {
+  const y = vehicle.relativeY;
+  const left = laneBoundaryXAtY(laneLines, relativeLane, y);
+  const right = laneBoundaryXAtY(laneLines, relativeLane + 1, y);
+  const leftAhead = laneBoundaryXAtY(laneLines, relativeLane, y + 1);
+  const rightAhead = laneBoundaryXAtY(laneLines, relativeLane + 1, y + 1);
+  // Compare in the lane's own frame so a car aligned with a curve ahead is not
+  // widened by its yaw relative to ego.
+  const laneHeading = Math.atan((leftAhead + rightAhead - left - right) / 2);
+  const yaw = vehicle.relativeHeading - laneHeading;
+  const halfExtent = (Math.abs(Math.cos(yaw)) * vehicle.width + Math.abs(Math.sin(yaw)) * vehicle.length) / 2;
+  const cosHeading = Math.cos(laneHeading);
+  const offsetFromLeft = (vehicle.relativeX - left) * cosHeading;
+  return offsetFromLeft - halfExtent < (right - left) * cosHeading && offsetFromLeft + halfExtent > 0;
+}
+
+/**
+ * Lateral position of a lane boundary at forward distance y. Boundary 0 is ego's
+ * left line and 1 its right line; missing lines are inferred from the nearest
+ * detected one, or from a nominal lane centered on ego when nothing is detected.
+ */
+function laneBoundaryXAtY(laneLines: LaneLineDetections, boundary: number, y: number): number {
+  // Detected lines cover boundaries -1 (farLeft) through 2 (farRight).
+  for (let distance = 0; distance <= Math.abs(boundary - 0.5) + 1.5; distance += 1) {
+    for (const index of distance === 0 ? [boundary] : [boundary - distance, boundary + distance]) {
+      const samples = detectedLaneLine(laneLines, index);
+      const x = samples && laneLineXAtY(samples, y);
+      if (x !== undefined) return x + (boundary - index) * ROAD_LANE_WIDTH;
+    }
+  }
+  return (boundary - 0.5) * ROAD_LANE_WIDTH;
+}
+
+function detectedLaneLine(laneLines: LaneLineDetections, boundary: number): LaneLineSample[] | undefined {
+  if (boundary === -1) return laneLines.farLeft;
+  if (boundary === 0) return laneLines.left;
+  if (boundary === 1) return laneLines.right;
+  if (boundary === 2) return laneLines.farRight;
+  return undefined;
+}
+
+const LANE_EXTRAPOLATION_BASELINE = 10;
+
+/** Interpolates a lane line at y, extending its end segments linearly beyond the detected span. */
+function laneLineXAtY(samples: LaneLineSample[], y: number): number | undefined {
+  if (samples.length === 0) return undefined;
+  // Sensor samples arrive in forward order; only copy when given something else.
+  let inOrder = true;
+  for (let index = 1; index < samples.length && inOrder; index += 1) inOrder = samples[index - 1].y <= samples[index].y;
+  const sorted = inOrder ? samples : [...samples].sort((a, b) => a.y - b.y);
+
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (sorted[mid].y < y) low = mid + 1;
+    else high = mid;
+  }
+  if (low > 0 && low < sorted.length) {
+    const before = sorted[low - 1];
+    const after = sorted[low];
+    return before.x + ((after.x - before.x) * (y - before.y)) / (after.y - before.y);
+  }
+  if (low < sorted.length && sorted[low].y === y) return sorted[low].x;
+
+  // Pair the end sample with the nearest one at least a baseline away (or the
+  // farthest available) so sample jitter doesn't dominate the slope.
+  const step = low === 0 ? 1 : -1;
+  const endIndex = low === 0 ? 0 : sorted.length - 1;
+  const end = sorted[endIndex];
+  let anchorIndex = endIndex;
+  while (
+    anchorIndex + step >= 0 &&
+    anchorIndex + step < sorted.length &&
+    Math.abs(sorted[anchorIndex].y - end.y) < LANE_EXTRAPOLATION_BASELINE
+  ) {
+    anchorIndex += step;
+  }
+  const anchor = sorted[anchorIndex];
+  if (anchor.y === end.y) return end.x;
+  return end.x + ((end.x - anchor.x) * (y - end.y)) / (end.y - anchor.y);
 }
 
 export function accelerationFeedforward(targetSpeed: number, currentSpeed: number): number {
@@ -304,8 +377,8 @@ function curveAwareTargetSpeed(curvature: number, desiredSpeed: number): number 
   return clamp(curveSpeed, 18, desiredSpeed);
 }
 
-function trafficSpeedControl(input: AutopilotInput, desiredSpeed: number, personality = DEFAULT_TRAFFIC_PERSONALITY): number {
-  const closest = closestVehicleAhead(input.vehicles, input.targetLane);
+function trafficSpeedControl(input: TrafficAutopilotInput, desiredSpeed: number, personality = DEFAULT_TRAFFIC_PERSONALITY): number {
+  const closest = closestVehicleAhead(input.vehicles, input.laneLines, input.targetLane - input.ego.laneIndex);
   let targetSpeed = desiredSpeed;
   let gapBrake = 0;
 
@@ -326,8 +399,9 @@ function trafficSpeedControl(input: AutopilotInput, desiredSpeed: number, person
 
 function laneChangeClearanceScore(input: AutopilotInput, laneIndex: number, personality = DEFAULT_TRAFFIC_PERSONALITY): number {
   let score = 80 * personality.laneChangeEagerness;
+  const relativeLane = laneIndex - input.ego.laneIndex;
   for (const vehicle of input.vehicles) {
-    if (vehicle.laneIndex !== laneIndex) continue;
+    if (!isVehicleInLane(vehicle, input.laneLines, relativeLane)) continue;
 
     const otherSpeed = input.ego.speed + vehicle.relativeVy;
     if (vehicle.relativeY >= 0) {

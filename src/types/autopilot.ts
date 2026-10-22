@@ -27,14 +27,6 @@ export interface AutopilotOutput {
   steering: number;
 
   /**
-   * Optional requested lane index.
-   *
-   * This is mainly used by traffic vehicles for lane changes.
-   * For the MVP, expose this in the API but do not require ego lane-changing UI yet.
-   */
-  targetLane?: number;
-
-  /**
    * Optional structured debug data. The simulator never trusts this for physics,
    * but the UI can display PID terms from custom controllers. Toolbox PIDs are inspected automatically.
    */
@@ -75,14 +67,6 @@ export interface AutopilotInput {
    * Detected lane-line samples in ego-relative coordinates.
    */
   laneLines: LaneLineDetections;
-
-  /**
-   * Current target lane for the controller.
-   *
-   * For the ego vehicle MVP, this will usually match ego.laneIndex.
-   * For traffic vehicles, this can differ from laneIndex during lane changes.
-   */
-  targetLane: number;
 }
 
 /**
@@ -149,11 +133,6 @@ export interface VehicleMeasurement {
   length: number;
   confidence: number;
   uncertainty: VehicleMeasurementUncertainty;
-
-  /**
-   * Lane associated with this measurement if known.
-   */
-  laneIndex?: number;
 }
 
 /**
@@ -184,7 +163,6 @@ export interface VehicleTrack {
   width: number;
   length: number;
   confidence: number;
-  laneIndex?: number;
 
   /** Seconds since this track was initialized. */
   age: number;
@@ -296,7 +274,6 @@ export interface PlaygroundSettings {
 export interface SanitizedAutopilotOutput {
   motor: number;
   steering: number;
-  targetLane: number;
   debug?: AutopilotDebug;
   invalidFields: string[];
 }

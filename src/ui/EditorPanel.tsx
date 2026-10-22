@@ -61,7 +61,6 @@ const autopilotHoverDocs: Record<string, string> = {
     '| `vehicles` | Stable filtered tracks, including velocity and uncertainty. |',
     '| `vehicleMeasurements` | Raw noisy observations before tracking; these may drop out. |',
     '| `laneLines` | Left/right/far lane-line sample points relative to ego. |',
-    '| `targetLane` | Lane the controller should track. For the MVP this usually matches the current lane. |',
   ].join('\n'),
   AutopilotOutput: [
     '**AutopilotOutput**',
@@ -72,7 +71,6 @@ const autopilotHoverDocs: Record<string, string> = {
     '| --- | --- |',
     '| `motor` | `-1` full braking, `0` coast, `1` full acceleration. |',
     '| `steering` | `-1` max left, `0` straight, `1` max right. |',
-    '| `targetLane` | Optional requested lane index. Exposed now for future lane-change work. |',
     '| `debug` | Optional PID telemetry for the UI. It never affects physics. |',
     '',
     'The simulator clamps invalid motor and steering values defensively.',
@@ -107,7 +105,7 @@ const autopilotHoverDocs: Record<string, string> = {
     '',
     'Deprecated compatibility name for `VehicleTrack`. New code should use `VehicleTrack`.',
     '',
-    'Use `laneIndex` and `relativeY` to find lead vehicles for adaptive cruise control.',
+    'Vehicles carry no lane number. Use `closestVehicleAhead(input.vehicles, input.laneLines)`, which counts a vehicle as in a lane when any part of its bounding box overlaps it, to find lead vehicles for adaptive cruise control.',
   ].join('\n'),
   LaneLineDetections: [
     '**LaneLineDetections**',
@@ -173,11 +171,20 @@ const autopilotHoverDocs: Record<string, string> = {
     'Estimates a motor command from speed error plus simple drag compensation.',
   ].join('\n'),
   adaptiveCruiseTargetSpeed: [
-    '**adaptiveCruiseTargetSpeed(input, freeRoadSpeed)**',
+    '**adaptiveCruiseTargetSpeed(input, freeRoadSpeed, relativeLane?)**',
     '',
     'Toolbox helper from `autopilot-toolbox.ts`.',
     '',
     'Reduces target speed when the closest vehicle ahead is inside the desired following gap.',
+  ].join('\n'),
+  createLaneChooser: [
+    '**createLaneChooser(options?)**',
+    '',
+    'Toolbox helper from `autopilot-toolbox.ts`.',
+    '',
+    'Creates a stateful chooser. Call `update(input)` once per tick; it returns the lane to steer toward relative to ego (`-1` left, `0` current, `1` right).',
+    '',
+    'An adjacent lane is chosen only when its traffic is faster than the current lane by at least `options.minSpeedGain` m/s (default 2) and there is room to merge. Your steering has to follow it, e.g. `analyzeLaneRegression(input.laneLines, relativeLane)`.',
   ].join('\n'),
   PidDebugTerms: [
     '**PidDebugTerms**',

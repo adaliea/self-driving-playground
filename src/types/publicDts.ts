@@ -15,11 +15,6 @@ interface AutopilotOutput {
   steering: number;
 
   /**
-   * Optional requested lane index. For the ego MVP this usually matches input.targetLane.
-   */
-  targetLane?: number;
-
-  /**
    * Optional telemetry for UI display only. It is never trusted for physics.
    */
   debug?: AutopilotDebug;
@@ -64,14 +59,6 @@ interface AutopilotInput {
    * These samples may be noisy or missing when lane-line noise is enabled.
    */
   laneLines: LaneLineDetections;
-
-  /**
-   * Current target lane for the controller.
-   *
-   * For the ego MVP this usually matches ego.laneIndex. Traffic controllers can
-   * use a different value while changing lanes.
-   */
-  targetLane: number;
 }
 
 interface EgoState {
@@ -115,8 +102,6 @@ interface VehicleMeasurement {
   confidence: number;
   /** Estimated one-standard-deviation measurement error. */
   uncertainty: VehicleMeasurementUncertainty;
-  /** Lane associated with this measurement if known. */
-  laneIndex?: number;
 }
 
 interface VehicleTrackUncertainty {
@@ -146,7 +131,6 @@ interface VehicleTrack {
   width: number;
   length: number;
   confidence: number;
-  laneIndex?: number;
   /** Seconds since this track was initialized. */
   age: number;
   /** Seconds since the last raw observation updated this track. */
@@ -274,9 +258,9 @@ interface AutopilotDebug {
  * By default, it fits a weighted quadratic through the nearest 3–21 meters
  * and estimates center offset, heading, and curvature at ego for steering.
  * Pass 'preview' as the third argument for the original longer forward fit
- * (5–56 meters), useful for speed planning. Pass
- * input.targetLane - input.ego.laneIndex as relativeTargetLane to analyze an
- * adjacent target lane during lane-change experiments.
+ * (5–56 meters), useful for speed planning. Pass -1 or 1 as relativeTargetLane
+ * to analyze an adjacent lane, for example the lane returned by a lane chooser
+ * during a lane change.
  */
 declare function analyzeLaneRegression(
   /** Lane-line samples around the ego lane. */

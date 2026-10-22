@@ -11,7 +11,7 @@ const positionPid = createPidController({
   integralMin: -0.1, integralMax: 0.1,
 });
 export function autopilot(input: AutopilotInput): AutopilotOutput {
-  const lead = closestVehicleAhead(input.vehicles, input.ego.laneIndex);
+  const lead = closestVehicleAhead(input.vehicles, input.laneLines);
   let motor;
   if (lead) {
     let targetSpeed = lead.relativeVy + input.ego.speed;
@@ -21,7 +21,7 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     motor = 1;
   }
   const lane = analyzeLane(input.laneLines);
-  return { motor, steering: clamp(0, -1, 1), targetLane: input.targetLane };
+  return { motor, steering: clamp(0, -1, 1) };
 }`;
 
 describe('conditional PID sandbox telemetry', () => {
@@ -50,8 +50,8 @@ describe('conditional PID sandbox telemetry', () => {
         type: 'run-autopilot', id,
         input: {
           dt: 1 / 45,
-          ego: { laneIndex: 1, speed: 20 }, targetLane: 1,
-          vehicles: distance === undefined ? [] : [{ laneIndex: 1, relativeY: distance, relativeVy: -1 }],
+          ego: { laneIndex: 1, speed: 20 },
+          vehicles: distance === undefined ? [] : [{ relativeX: 0, relativeY: distance, relativeVy: -1, relativeHeading: 0, width: 1.9, length: 4.6 }],
           laneLines: { left: [], right: [], farLeft: [], farRight: [] },
         },
       } });
