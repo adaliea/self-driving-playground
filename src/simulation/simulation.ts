@@ -293,7 +293,9 @@ export class Simulation {
         ? this.road.worldPointAt(focus.s, focus.lateral)
         : this.road.worldPointAt(centerS, 0);
     const cameraHeading = cameraPose.heading + (view.centerS === undefined ? focus.headingOffset : 0);
-    const startS = Math.max(0, centerS - (view.behindMeters ?? 75));
+    // Custom views snap sampling to a fixed grid so road-side points keep stable world positions.
+    const unsnappedStartS = Math.max(0, centerS - (view.behindMeters ?? 75));
+    const startS = view.centerS === undefined ? unsnappedStartS : Math.floor(unsnappedStartS / 20) * 20;
     const endS = centerS + (view.aheadMeters ?? 190);
     this.road.extendTo(endS + 50);
 

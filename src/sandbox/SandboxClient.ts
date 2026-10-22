@@ -82,7 +82,7 @@ export class SandboxClient {
     return version;
   }
 
-  async run(input: AutopilotInput, timeoutMs = 24): Promise<SandboxRunResult> {
+  async run(input: AutopilotInput, timeoutMs = 24, inspect = true): Promise<SandboxRunResult> {
     await this.start();
     const id = this.requestId++;
 
@@ -93,7 +93,7 @@ export class SandboxClient {
       }, timeoutMs + 80);
 
       this.pendingRuns.set(id, { resolve, reject, timer });
-      this.send({ type: 'run-autopilot', id, input, timeoutMs });
+      this.send({ type: 'run-autopilot', id, input, timeoutMs, inspect });
     });
   }
 

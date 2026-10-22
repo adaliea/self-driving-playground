@@ -49,6 +49,8 @@ export type SandboxToFrameMessage =
       id: number;
       input: AutopilotInput;
       timeoutMs: number;
+      /** Set false to skip capturing runtime values for the editor. */
+      inspect?: boolean;
     };
 
 export function isSandboxFromFrameMessage(value: unknown): value is SandboxFromFrameMessage {
