@@ -16,6 +16,8 @@ export interface CartoonFrame {
   atFaultPenalty: number;
   /** Seconds, used for idle animation. */
   time: number;
+  /** Screen x of the camera center in CSS pixels. Defaults to the middle of the canvas. */
+  centerX?: number;
 }
 
 interface ScreenPoint {
@@ -92,9 +94,13 @@ export class CartoonRenderer {
     const forward = Math.sin(camera.heading) * dx + Math.cos(camera.heading) * dy;
     const right = Math.cos(camera.heading) * dx - Math.sin(camera.heading) * dy;
     return {
-      x: this.width / 2 + forward * this.frame!.scale,
+      x: this.centerX + forward * this.frame!.scale,
       y: this.height / 2 + right * this.frame!.scale,
     };
+  }
+
+  private get centerX(): number {
+    return this.frame?.centerX ?? this.width / 2;
   }
 
   private screenAngle(worldHeading: number): number {
@@ -111,12 +117,12 @@ export class CartoonRenderer {
     // Mowing stripes are fixed in world space so they scroll with the camera.
     const stripe = 24;
     const cameraForward = Math.sin(camera.heading) * camera.x + Math.cos(camera.heading) * camera.y;
-    const first = Math.floor((cameraForward - this.width / 2 / scale) / stripe);
-    const last = Math.ceil((cameraForward + this.width / 2 / scale) / stripe);
+    const first = Math.floor((cameraForward - this.centerX / scale) / stripe);
+    const last = Math.ceil((cameraForward + (this.width - this.centerX) / scale) / stripe);
     ctx.fillStyle = GRASS_STRIPE;
     for (let index = first; index <= last; index += 1) {
       if (index % 2 !== 0) continue;
-      const x = this.width / 2 + (index * stripe - cameraForward) * scale;
+      const x = this.centerX + (index * stripe - cameraForward) * scale;
       ctx.fillRect(x, 0, stripe * scale, this.height);
     }
   }

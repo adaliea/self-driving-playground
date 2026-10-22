@@ -128,10 +128,11 @@ export class RaceEngine {
       driver.connected = summary.connected;
       return;
     }
+    const used = new Set([...this.drivers.values()].map((existing) => existing.color));
     this.drivers.set(summary.id, {
       playerId: summary.id,
       name: summary.name,
-      color: colorForPlayer(summary.id),
+      color: PLAYER_COLORS.find((color) => !used.has(color)) ?? colorForPlayer(summary.id),
       connected: summary.connected,
       status: 'waiting',
     });

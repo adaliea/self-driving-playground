@@ -7,8 +7,10 @@ import { RACE_SCORING } from './scoring';
 
 const HOST_SESSION_KEY = 'self-driving-playground:host-session:v1';
 const UI_REFRESH_MS = 250;
-const PACK_WINDOW_METERS = 180;
-const MIN_SCALE = 5;
+const PACK_WINDOW_METERS = 120;
+/** Width reserved on the right for the standings column. */
+const SIDEBAR_PX = 380;
+const MIN_SCALE = 6.5;
 const MAX_SCALE = 13;
 const BACKLOG_FRAME_SKIP_SECONDS = 0.08;
 const MAX_SKIPPED_FRAMES = 2;
@@ -171,13 +173,15 @@ export function HostView() {
         const packMinS = Math.min(...states.filter((state) => state.s > leaderS - PACK_WINDOW_METERS).map((state) => state.s));
         const span = leaderS - packMinS + 70;
         const targetCenter = (packMinS + leaderS) / 2 + 12;
-        const targetScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, (renderer.viewportWidth * 0.82) / span));
+        const visibleWidth = Math.max(320, renderer.viewportWidth - SIDEBAR_PX);
+        const targetScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, (visibleWidth * 0.85) / span));
         const snap = camera.round !== engine.round;
         const blend = snap ? 1 : Math.min(1, elapsed * 2.5);
         camera.round = engine.round;
         camera.centerS += (targetCenter - camera.centerS) * blend;
         camera.scale += (targetScale - camera.scale) * blend;
-        const half = renderer.viewportWidth / 2 / camera.scale + 30;
+        const centerX = visibleWidth / 2;
+        const half = Math.max(centerX, renderer.viewportWidth - centerX) / camera.scale + 30;
         const snapshot = engine.snapshot({ centerS: camera.centerS, behindMeters: half, aheadMeters: half });
         if (snapshot) {
           const standings = engine.liveStandings();
@@ -187,7 +191,14 @@ export function HostView() {
               { name: standing.name, color: standing.color, place: index + 1, stalled: standing.stalled },
             ]),
           );
-          renderer.render({ snapshot, scale: camera.scale, players, atFaultPenalty: RACE_SCORING.atFaultPenalty, time: now / 1000 });
+          renderer.render({
+            snapshot,
+            scale: camera.scale,
+            players,
+            atFaultPenalty: RACE_SCORING.atFaultPenalty,
+            time: now / 1000,
+            centerX,
+          });
         }
       }
       frame = requestAnimationFrame(loop);
@@ -502,7 +513,7 @@ function ProgressStrip({ progress }: { progress: HostUiState['progress'] }) {
           {initials(entry.name)}
         </div>
       ))}
-      <div className="absolute right-3 top-1 text-xs font-black opacity-60">{Math.round(max)} m</div>
+      <div className="absolute bottom-0.5 right-3 text-[10px] font-black opacity-50">{Math.round(max)} m</div>
     </div>
   );
 }
