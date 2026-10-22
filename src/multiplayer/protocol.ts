@@ -8,7 +8,8 @@ export const MAX_PLAYER_NAME_LENGTH = 24;
 export const MAX_SOURCE_BYTES = 64 * 1024;
 export const MAX_MESSAGE_BYTES = MAX_SOURCE_BYTES + 4 * 1024;
 export const MIN_SUBMIT_INTERVAL_MS = 3000;
-export const MAX_PLAYERS_PER_ROOM = 40;
+/** Kept near the measured comfortable load: ~9 ms per simulation step at 24 players. */
+export const MAX_PLAYERS_PER_ROOM = 30;
 
 export type RoundPhase = 'lobby' | 'racing' | 'intermission';
 
