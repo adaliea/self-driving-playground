@@ -1,6 +1,6 @@
 import type { RenderSnapshot } from '../rendering';
 import { CompilerClient, SandboxClient } from '../sandbox';
-import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation, type PlayerRaceState } from '../simulation';
+import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation, type PlayerRaceState, type VehicleFrame } from '../simulation';
 import { SeededRandom } from '../simulation/random';
 import type { PlaygroundSettings } from '../types';
 import type { DriverStatusUpdate, LeaderboardEntry, PlayerSummary, RoundPhase, RoundResult, RoundState } from './protocol';
@@ -10,6 +10,11 @@ const MAX_STEPS_PER_TICK = 4;
 const DRIVER_TIMEOUT_MS = 28;
 /** A driver that blows its frame budget this many steps in a row is benched until the next round. */
 const MAX_CONSECUTIVE_TIMEOUTS = 30;
+/** Rendering trails the simulation so there is usually a later step to interpolate toward. */
+const RENDER_DELAY_SECONDS = FIXED_TIMESTEP * 2;
+const MAX_FRAME_HISTORY = 12;
+/** Recycled traffic teleports along the road; never interpolate across a jump this large. */
+const MAX_INTERPOLATED_JUMP_METERS = 15;
 
 export const PLAYER_COLORS = [
   '#ff5a5f', '#ffb400', '#00c2a8', '#3d8bff', '#b15cff', '#ff7ac6', '#7ed957', '#ff8a3d',
@@ -103,6 +108,8 @@ export class RaceEngine {
   private settings: PlaygroundSettings = raceSettings(0, DEFAULT_RACE_CONFIG.trafficDensity);
   private racers: Racer[] = [];
   private accumulator = 0;
+  private frameHistory: { time: number; frames: Map<string, VehicleFrame> }[] = [];
+  private renderTime = 0;
   private intermissionEndsAt = 0;
   private stepping = false;
   private disposed = false;
@@ -235,8 +242,53 @@ export class RaceEngine {
     return this.simulation?.getPlayerStates() ?? [];
   }
 
-  snapshot(view: { centerS: number; behindMeters: number; aheadMeters: number }): RenderSnapshot | undefined {
+  snapshot(
+    view: { centerS: number; behindMeters: number; aheadMeters: number; poses?: ReadonlyMap<string, VehicleFrame> },
+  ): RenderSnapshot | undefined {
     return this.simulation?.getSnapshot(this.settings, view);
+  }
+
+  /**
+   * Advances the presenter clock by `elapsed` seconds and returns vehicle poses interpolated between
+   * simulation steps. Steps land in bursts while drivers run, so drawing raw steps would stutter.
+   */
+  renderFrames(elapsed: number): ReadonlyMap<string, VehicleFrame> | undefined {
+    const history = this.frameHistory;
+    if (history.length === 0) return undefined;
+    const latest = history[history.length - 1].time;
+    const target = latest - RENDER_DELAY_SECONDS;
+    this.renderTime += elapsed;
+    // Ease toward the target delay rather than jumping, so uneven stepping does not read as speed changes.
+    const error = target - this.renderTime;
+    if (Math.abs(error) > 0.25) this.renderTime = target;
+    else this.renderTime += error * Math.min(1, elapsed * 4);
+    this.renderTime = Math.min(this.renderTime, latest);
+
+    const next = history.findIndex((entry) => entry.time > this.renderTime);
+    if (next === -1) return history[history.length - 1].frames;
+    if (next === 0) return history[0].frames;
+    const from = history[next - 1];
+    const to = history[next];
+    const alpha = (this.renderTime - from.time) / (to.time - from.time);
+    const frames = new Map<string, VehicleFrame>();
+    for (const [id, end] of to.frames) {
+      const start = from.frames.get(id);
+      if (!start || Math.abs(end.s - start.s) > MAX_INTERPOLATED_JUMP_METERS) {
+        frames.set(id, end);
+        continue;
+      }
+      frames.set(id, {
+        s: start.s + (end.s - start.s) * alpha,
+        lateral: start.lateral + (end.lateral - start.lateral) * alpha,
+        headingOffset: start.headingOffset + (end.headingOffset - start.headingOffset) * alpha,
+      });
+    }
+    return frames;
+  }
+
+  private recordFrames(simulation: Simulation): void {
+    this.frameHistory.push({ time: simulation.currentTime, frames: simulation.getVehicleFrames() });
+    if (this.frameHistory.length > MAX_FRAME_HISTORY) this.frameHistory.shift();
   }
 
   async startRound(): Promise<void> {
@@ -272,6 +324,9 @@ export class RaceEngine {
         atFaultStallSeconds: RACE_SCORING.atFaultStallSeconds,
       });
       this.accumulator = 0;
+      this.frameHistory = [];
+      this.renderTime = 0;
+      this.recordFrames(this.simulation);
       this.phase = 'racing';
       this.paused = false;
       for (const racer of this.racers) {
@@ -375,6 +430,7 @@ export class RaceEngine {
     });
     const outputs = new Map<string, unknown>(await Promise.all(runs));
     simulation.stepPlayers(FIXED_TIMESTEP, outputs, this.settings);
+    this.recordFrames(simulation);
   }
 
   private handleRunError(racer: Racer, error: unknown): void {

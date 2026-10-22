@@ -7,6 +7,7 @@ export type {
   SimulationPlayer,
   SimulationVehicleDebug,
   SimulationViewOptions,
+  VehicleFrame,
 } from './simulation';
 export { createTrafficPersonality, getTrafficPersonalities } from './personalities';
 export type { LaneControlModel, TrafficPersonality, TrafficPersonalityId, TrafficPersonalityInstance } from './personalities';

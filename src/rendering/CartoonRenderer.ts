@@ -18,6 +18,8 @@ export interface CartoonFrame {
   time: number;
   /** Screen x of the camera center in CSS pixels. Defaults to the middle of the canvas. */
   centerX?: number;
+  /** Road station at the camera center, used to scroll ground decoration with the road. */
+  cameraS?: number;
 }
 
 interface ScreenPoint {
@@ -114,9 +116,10 @@ export class CartoonRenderer {
     ctx.fillStyle = GRASS;
     ctx.fillRect(0, 0, this.width, this.height);
 
-    // Mowing stripes are fixed in world space so they scroll with the camera.
+    // Mowing stripes are fixed to road distance so they scroll with the camera, even through curves.
     const stripe = 24;
-    const cameraForward = Math.sin(camera.heading) * camera.x + Math.cos(camera.heading) * camera.y;
+    const cameraForward =
+      this.frame!.cameraS ?? Math.sin(camera.heading) * camera.x + Math.cos(camera.heading) * camera.y;
     const first = Math.floor((cameraForward - this.centerX / scale) / stripe);
     const last = Math.ceil((cameraForward + (this.width - this.centerX) / scale) / stripe);
     ctx.fillStyle = GRASS_STRIPE;

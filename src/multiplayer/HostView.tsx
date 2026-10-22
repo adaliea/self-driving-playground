@@ -159,6 +159,8 @@ export function HostView() {
       const elapsed = Math.max(0, (now - previous) / 1000);
       previous = now;
       const engine = engineRef.current;
+      // Advance the interpolation clock every frame, including skipped ones, so it keeps real time.
+      const poses = engine?.renderFrames(elapsed);
       // When drivers are falling behind real time, drop frames to free the main thread for them.
       if (engine && engine.backlogSeconds > BACKLOG_FRAME_SKIP_SECONDS && skipped < MAX_SKIPPED_FRAMES) {
         skipped += 1;
@@ -166,7 +168,7 @@ export function HostView() {
         return;
       }
       skipped = 0;
-      const states = engine?.playerStates() ?? [];
+      const states = (engine?.playerStates() ?? []).map((state) => ({ ...state, s: poses?.get(state.id)?.s ?? state.s }));
       if (!engine || states.length === 0) {
         renderer.renderIdle(now / 1000);
       } else {
@@ -183,7 +185,7 @@ export function HostView() {
         camera.scale += (targetScale - camera.scale) * blend;
         const centerX = visibleWidth / 2;
         const half = Math.max(centerX, renderer.viewportWidth - centerX) / camera.scale + 30;
-        const snapshot = engine.snapshot({ centerS: camera.centerS, behindMeters: half, aheadMeters: half });
+        const snapshot = engine.snapshot({ centerS: camera.centerS, behindMeters: half, aheadMeters: half, poses });
         if (snapshot) {
           const standings = engine.liveStandings();
           const players = new Map<string, CartoonPlayerLabel>(
@@ -199,6 +201,7 @@ export function HostView() {
             atFaultPenalty: RACE_SCORING.atFaultPenalty,
             time: now / 1000,
             centerX,
+            cameraS: camera.centerS,
           });
         }
       }
