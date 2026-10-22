@@ -7,6 +7,7 @@ import type {
   VehicleTrack,
 } from '../types';
 import { clamp, normalizeAngle } from './math';
+import type { TrafficAutopilotInput } from './controllers';
 import type { Road } from './road';
 import type { SeededRandom } from './random';
 import type { VehicleState } from './vehicle';
@@ -46,6 +47,9 @@ const INDEPENDENT_NOISE_WEIGHT = Math.sqrt(1 - CORRELATED_BIAS_WEIGHT ** 2);
 
 const SENSOR_STATION_CULL_BEHIND = 90;
 const SENSOR_STATION_CULL_AHEAD = 220;
+
+const EGO_LANE_SAMPLE_DISTANCES = laneSampleDistances();
+const TRAFFIC_LANE_SAMPLE_DISTANCES = Array.from({ length: 19 }, (_, index) => -45 + index * 10);
 
 export class SensorSimulator {
   private readonly measurementNoise = new Map<string, Map<string, MeasurementNoiseState>>();
@@ -87,7 +91,6 @@ export class SensorSimulator {
       vehicles: tracks,
       vehicleMeasurements: observation.measurements,
       laneLines: this.detectLaneLines(subject, road, settings.noisyLaneLines, rng),
-      targetLane: clamp(subject.targetLane, 0, road.laneCount - 1),
     };
   }
 
@@ -97,7 +100,7 @@ export class SensorSimulator {
     road: Road,
     rng: SeededRandom,
     dt: number,
-  ): AutopilotInput {
+  ): TrafficAutopilotInput {
     const laneIndex = road.getLaneIndex(subject.lateral);
 
     const observation = this.observeVehicles(subject, vehicles, road, false, rng, dt);
@@ -110,12 +113,7 @@ export class SensorSimulator {
       },
       vehicles: observation.truthTracks,
       vehicleMeasurements: observation.measurements,
-      laneLines: {
-        left: [],
-        right: [],
-        farLeft: [],
-        farRight: [],
-      },
+      laneLines: traceTrafficLaneLines(subject, road),
       targetLane: clamp(subject.targetLane, 0, road.laneCount - 1),
     };
   }
@@ -167,7 +165,6 @@ export class SensorSimulator {
         width: vehicle.width,
         length: vehicle.length,
         confidence: 1,
-        laneIndex: road.getLaneIndex(vehicle.lateral),
         age: 0,
         timeSinceMeasurement: 0,
         isPredicted: false,
@@ -201,7 +198,7 @@ export class SensorSimulator {
       subjectNoise.set(vehicle.id, noiseState);
 
       if (shouldDropMeasurement(noiseState, distanceT, lateralT, rng, dt)) continue;
-      measurements.push(noisyMeasurement(truth, vehicle.lateral, scale, combinedError, quality, outlierScale, road, rng));
+      measurements.push(noisyMeasurement(truth, scale, combinedError, quality, outlierScale, rng));
     }
 
     for (const id of subjectNoise.keys()) {
@@ -240,7 +237,7 @@ export class SensorSimulator {
     const right = { x: Math.cos(subjectHeading), y: -Math.sin(subjectHeading) };
     const samples: LaneLineSample[] = [];
 
-    for (const ahead of laneSampleDistances()) {
+    for (const ahead of EGO_LANE_SAMPLE_DISTANCES) {
       const distanceT = clamp(ahead / 92, 0, 1);
       const quality = clamp(1 - distanceT * 0.72, 0.24, 1);
       if (noisy && rng.chance(0.025 + (1 - quality) * 0.2)) continue;
@@ -332,28 +329,24 @@ function combineDetectionErrors(bias: DetectionError, independent: DetectionErro
 
 function noisyMeasurement(
   truth: VehicleTrack,
-  vehicleLateral: number,
   scale: DetectionNoiseScale,
   error: DetectionError,
   quality: number,
   outlierScale: number,
-  road: Road,
   rng: SeededRandom,
 ): VehicleMeasurement {
-  const lateralError = error.relativeX * scale.relativeX;
   const uncertaintyMultiplier = Math.hypot(
     CORRELATED_BIAS_WEIGHT,
     INDEPENDENT_NOISE_WEIGHT * outlierScale,
   );
   return {
     id: truth.id,
-    relativeX: truth.relativeX + lateralError,
+    relativeX: truth.relativeX + error.relativeX * scale.relativeX,
     relativeY: truth.relativeY + error.relativeY * scale.relativeY,
     relativeHeading: normalizeAngle(truth.relativeHeading + error.relativeHeading * scale.relativeHeading),
     width: Math.max(1.4, truth.width + error.width * scale.width),
     length: Math.max(3.4, truth.length + error.length * scale.length),
     confidence: clamp(quality - (outlierScale > 1 ? 0.16 : 0) + rng.gaussian(0, 0.025), 0.25, 0.99),
-    laneIndex: road.getLaneIndex(vehicleLateral + lateralError * 0.55),
     uncertainty: {
       lateralPosition: scale.relativeX * uncertaintyMultiplier,
       longitudinalPosition: scale.relativeY * uncertaintyMultiplier,
@@ -371,7 +364,6 @@ function measurementFromTruth(truth: VehicleTrack): VehicleMeasurement {
     width: truth.width,
     length: truth.length,
     confidence: 1,
-    laneIndex: truth.laneIndex,
     uncertainty: {
       lateralPosition: 0,
       longitudinalPosition: 0,
@@ -399,6 +391,44 @@ function shouldDropMeasurement(
   if (!rng.chance(startProbability)) return false;
   state.dropoutRemaining = rng.range(0.055, 0.22);
   return true;
+}
+
+/**
+ * Exact lane lines for traffic controllers. Traffic checks lane occupancy behind
+ * it before changing lanes, so these span the whole vehicle sensor range rather
+ * than the ego camera's forward view. One road sample per distance feeds all
+ * four boundaries because this runs for every traffic car each step.
+ */
+function traceTrafficLaneLines(subject: VehicleState, road: Road): LaneLineDetections {
+  const subjectPose = road.worldPointAt(subject.s, subject.lateral);
+  const subjectHeading = subjectPose.heading + subject.headingOffset;
+  const sinHeading = Math.sin(subjectHeading);
+  const cosHeading = Math.cos(subjectHeading);
+  const laneIndex = road.getLaneIndex(subject.lateral);
+  const offsets = [
+    road.getBoundaryOffset(Math.max(0, laneIndex - 1)),
+    road.getBoundaryOffset(laneIndex),
+    road.getBoundaryOffset(laneIndex + 1),
+    road.getBoundaryOffset(Math.min(road.laneCount, laneIndex + 2)),
+  ];
+  const lines: LaneLineSample[][] = [[], [], [], []];
+
+  for (const ahead of TRAFFIC_LANE_SAMPLE_DISTANCES) {
+    const sample = road.sampleAt(subject.s + ahead);
+    const rightX = Math.cos(sample.heading);
+    const rightY = -Math.sin(sample.heading);
+    for (let line = 0; line < 4; line += 1) {
+      const dx = sample.x + rightX * offsets[line] - subjectPose.x;
+      const dy = sample.y + rightY * offsets[line] - subjectPose.y;
+      lines[line].push({
+        x: dx * cosHeading - dy * sinHeading,
+        y: dx * sinHeading + dy * cosHeading,
+        confidence: 1,
+      });
+    }
+  }
+
+  return { farLeft: lines[0], left: lines[1], right: lines[2], farRight: lines[3] };
 }
 
 function degreesToRadians(degrees: number): number {

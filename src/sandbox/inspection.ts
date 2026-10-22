@@ -5,7 +5,6 @@ export const TOOLBOX_INSPECTORS = [
   'createVehicleTracker',
   'analyzeLane',
   'analyzeLaneRegression',
-  'analyzeTargetLane',
   'closestVehicleAhead',
   'adaptiveCruiseTargetSpeed',
   'accelerationFeedforward',

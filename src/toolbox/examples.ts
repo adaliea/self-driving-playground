@@ -47,7 +47,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   return {
     motor: clamp(motor, -1, 1),
     steering: clamp(steering, -1, 1),
-    targetLane: input.targetLane,
   };
 }`,
   },
@@ -62,7 +61,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   return {
     motor: 0.34,
     steering: clamp(steering, -1, 1),
-    targetLane: input.targetLane,
   };
 }`,
   },
@@ -100,7 +98,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   return {
     motor: clamp(motor, -1, 1),
     steering: clamp(steering, -1, 1),
-    targetLane: input.targetLane,
   };
 }`,
   },
@@ -138,7 +135,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   return {
     motor: clamp(motor, -1, 1),
     steering: clamp(steering, -1, 1),
-    targetLane: input.targetLane,
   };
 }`,
   },
@@ -168,7 +164,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     // This motor value is intentionally ignored when "Accelerate for me" is on.
     motor: 0,
     steering: clamp(steering, -1, 1),
-    targetLane: input.targetLane,
   };
 }`,
   },
@@ -199,7 +194,54 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     motor: clamp(motor, -1, 1),
     // This steering value is intentionally ignored when "Steer for me" is on.
     steering: 0,
-    targetLane: input.targetLane,
+  };
+}`,
+  },
+  {
+    id: 'fastest-lane',
+    title: 'Fastest lane',
+    description: 'Lane keeping and adaptive cruise that move to an adjacent lane when its traffic is faster by a configurable margin.',
+    code: `// Minimum speed advantage, in m/s, before changing lanes. Raise it to change lanes less often.
+const laneChooser = createLaneChooser({ minSpeedGain: 2.5 });
+
+const lanePid = createPidController({
+  kp: 0.36,
+  ki: 0.014,
+  kd: 0.12,
+  outputMin: -1,
+  outputMax: 1,
+  integralMin: -2,
+  integralMax: 2,
+});
+
+const speedPid = createPidController({
+  kp: 0.09,
+  ki: 0.012,
+  kd: 0.012,
+  outputMin: -1,
+  outputMax: 1,
+  integralMin: -4,
+  integralMax: 4,
+});
+
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  // -1 / 1 while moving into the left / right lane, otherwise 0.
+  const relativeLane = laneChooser.update(input);
+
+  // Steer toward the chosen lane's center. Limiting the error keeps the lane change gentle.
+  const lane = analyzeLaneRegression(input.laneLines, relativeLane);
+  const laneError = clamp(lane.centerOffset, -1.2, 1.2) + lane.heading * 2.2;
+  const steering = lanePid.update(laneError, input.dt) +
+    curvatureSteeringFeedforward(lane, input.ego.speed);
+
+  // Watch the lane being entered as well as the current one.
+  const targetSpeed = adaptiveCruiseTargetSpeed(input, 29, relativeLane);
+  const motor = accelerationFeedforward(targetSpeed, input.ego.speed) +
+    speedPid.update(targetSpeed - input.ego.speed, input.dt);
+
+  return {
+    motor: clamp(motor, -1, 1),
+    steering: clamp(steering, -1, 1),
   };
 }`,
   },
@@ -217,7 +259,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   return {
     motor: 0.62,
     steering: clamp(steering, -1, 1),
-    targetLane: input.targetLane,
   };
 }`,
   },

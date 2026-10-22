@@ -10,7 +10,14 @@ export interface VehicleState {
   headingOffset: number;
   speed: number;
   laneIndex: number;
+  /** Lane traffic is steering toward. Players don't declare one, so for them it tracks laneIndex. */
   targetLane: number;
+  /**
+   * Players only: the last lane they were settled in (near its center and
+   * heading along the road). Collision blame measures drift from this lane, so
+   * crossing into another lane doesn't make it the player's lane until they settle there.
+   */
+  settledLane?: number;
   desiredSpeed: number;
   width: number;
   length: number;
@@ -31,7 +38,6 @@ export interface AppliedControls {
   finalSteering: number;
   actualMotor: number;
   actualSteering: number;
-  targetLane: number;
   steerOverridden: boolean;
   motorOverridden: boolean;
   invalidFields: string[];

@@ -48,7 +48,6 @@ interface VehicleTrackerState {
   width: number;
   length: number;
   confidence: number;
-  laneIndex?: number;
   age: number;
   timeSinceMeasurement: number;
   isPredicted: boolean;
@@ -109,7 +108,6 @@ function createVehicleTracker(options: VehicleTrackerOptions = {}): VehicleTrack
         state.width += (measurement.width - state.width) * 0.28;
         state.length += (measurement.length - state.length) * 0.22;
         state.confidence = clamp(state.confidence * 0.58 + measurement.confidence * 0.42, 0, 1);
-        state.laneIndex = measurement.laneIndex;
         state.timeSinceMeasurement = 0;
         state.isPredicted = false;
       }
@@ -148,7 +146,6 @@ function initializeVehicleTrackerState(
     width: measurement.width,
     length: measurement.length,
     confidence: measurement.confidence,
-    laneIndex: measurement.laneIndex,
     age: dt,
     timeSinceMeasurement: 0,
     isPredicted: false,
@@ -214,7 +211,6 @@ function vehicleTrackFromState(state: VehicleTrackerState): VehicleTrack {
     width: state.width,
     length: state.length,
     confidence: clamp(state.confidence, 0, 1),
-    laneIndex: state.laneIndex,
     age: state.age,
     timeSinceMeasurement: state.timeSinceMeasurement,
     isPredicted: state.isPredicted,
@@ -235,34 +231,131 @@ function normalizeTrackerAngle(angle: number): number {
   return result;
 }`;
 
-export const vehicleFilteringImplementation = `/**
- * Returns detections whose estimated lane matches laneIndex.
+export const vehicleFilteringImplementation = `/** Nominal lane width in meters, used when a lane line isn't detected. */
+const LANE_WIDTH = 3.7;
+
+/**
+ * Checks whether any part of a vehicle's bounding box overlaps a lane.
  *
- * @param vehicles Nearby vehicle detections from AutopilotInput.vehicles.
- * @param laneIndex Lane to keep.
- * @returns Vehicles whose laneIndex equals the requested lane.
+ * Lane boundaries come from the detected lane lines at the vehicle's forward
+ * distance. The box is rotated into the lane's direction, so a car straddling a
+ * line counts as being in both lanes.
+ *
+ * @param vehicle Vehicle track or measurement in ego-relative coordinates.
+ * @param laneLines Detected lane lines from AutopilotInput.laneLines.
+ * @param relativeLane Lane to test relative to ego: -1 left, 0 ego's lane, 1 right.
+ * @returns True when the vehicle's footprint overlaps the lane.
  */
-function filterVehiclesInLane(
-  vehicles: VehicleDetection[],
-  laneIndex: number
-): VehicleDetection[] {
-  return vehicles.filter(vehicle => vehicle.laneIndex === laneIndex);
+function isVehicleInLane(
+  vehicle: VehicleTrack | VehicleMeasurement,
+  laneLines: LaneLineDetections,
+  relativeLane = 0
+): boolean {
+  const y = vehicle.relativeY;
+  const left = laneBoundaryXAtY(laneLines, relativeLane, y);
+  const right = laneBoundaryXAtY(laneLines, relativeLane + 1, y);
+  const leftAhead = laneBoundaryXAtY(laneLines, relativeLane, y + 1);
+  const rightAhead = laneBoundaryXAtY(laneLines, relativeLane + 1, y + 1);
+  // Compare in the lane's own frame so a car aligned with a curve ahead is not
+  // widened by its yaw relative to ego.
+  const laneHeading = Math.atan((leftAhead + rightAhead - left - right) / 2);
+  const yaw = vehicle.relativeHeading - laneHeading;
+  const halfExtent =
+    (Math.abs(Math.cos(yaw)) * vehicle.width + Math.abs(Math.sin(yaw)) * vehicle.length) / 2;
+  const cosHeading = Math.cos(laneHeading);
+  const offsetFromLeft = (vehicle.relativeX - left) * cosHeading;
+  return offsetFromLeft - halfExtent < (right - left) * cosHeading && offsetFromLeft + halfExtent > 0;
 }
 
 /**
- * Finds the nearest detected vehicle ahead in a lane.
+ * Returns vehicles whose bounding box overlaps a lane.
  *
- * @param vehicles Nearby vehicle detections from AutopilotInput.vehicles.
- * @param laneIndex Lane to search.
+ * @param vehicles Nearby vehicles from AutopilotInput.vehicles.
+ * @param laneLines Detected lane lines from AutopilotInput.laneLines.
+ * @param relativeLane Lane to keep relative to ego: -1 left, 0 ego's lane, 1 right.
+ * @returns Vehicles with any part of their footprint in the lane.
+ */
+function filterVehiclesInLane(
+  vehicles: VehicleDetection[],
+  laneLines: LaneLineDetections,
+  relativeLane = 0
+): VehicleDetection[] {
+  return vehicles.filter(vehicle => isVehicleInLane(vehicle, laneLines, relativeLane));
+}
+
+/**
+ * Finds the nearest vehicle ahead whose bounding box overlaps a lane.
+ *
+ * @param vehicles Nearby vehicles from AutopilotInput.vehicles.
+ * @param laneLines Detected lane lines from AutopilotInput.laneLines.
+ * @param relativeLane Lane to search relative to ego: -1 left, 0 ego's lane, 1 right.
  * @returns The closest vehicle with positive relativeY, or undefined when the lane is clear.
  */
 function closestVehicleAhead(
   vehicles: VehicleDetection[],
-  laneIndex: number
+  laneLines: LaneLineDetections,
+  relativeLane = 0
 ): VehicleDetection | undefined {
-  return filterVehiclesInLane(vehicles, laneIndex)
+  return filterVehiclesInLane(vehicles, laneLines, relativeLane)
     .filter(vehicle => vehicle.relativeY > 0)
     .sort((a, b) => a.relativeY - b.relativeY)[0];
+}
+
+/**
+ * Lateral position of a lane boundary at a forward distance.
+ *
+ * Boundary 0 is ego's left line and 1 its right line (-1 far left, 2 far right).
+ * Missing lines are inferred from the nearest detected one, or from a nominal
+ * lane centered on ego when nothing is detected.
+ */
+function laneBoundaryXAtY(laneLines: LaneLineDetections, boundary: number, y: number): number {
+  const detected: Array<[number, LaneLineSample[]]> = [
+    [-1, laneLines.farLeft],
+    [0, laneLines.left],
+    [1, laneLines.right],
+    [2, laneLines.farRight],
+  ];
+  let nearest: [number, number] | undefined;
+  for (const [index, samples] of detected) {
+    if (nearest && Math.abs(index - boundary) >= Math.abs(nearest[0] - boundary)) continue;
+    const x = laneLineXAtY(samples, y);
+    if (x !== undefined) nearest = [index, x];
+  }
+  if (!nearest) return (boundary - 0.5) * LANE_WIDTH;
+  return nearest[1] + (boundary - nearest[0]) * LANE_WIDTH;
+}
+
+/**
+ * Interpolates a lane line at a forward distance, extending its end segments
+ * linearly beyond the detected span.
+ */
+function laneLineXAtY(samples: LaneLineSample[], y: number): number | undefined {
+  if (samples.length === 0) return undefined;
+  let before: LaneLineSample | undefined;
+  let after: LaneLineSample | undefined;
+  for (const sample of samples) {
+    if (sample.y <= y && (!before || sample.y > before.y)) before = sample;
+    if (sample.y >= y && (!after || sample.y < after.y)) after = sample;
+  }
+  if (before && after) {
+    if (after.y === before.y) return before.x;
+    return before.x + ((after.x - before.x) * (y - before.y)) / (after.y - before.y);
+  }
+
+  // Pair the end sample with the nearest one at least 10 m away (or the
+  // farthest available) so sample jitter doesn't dominate the slope.
+  const end = (before ?? after)!;
+  let anchor = end;
+  for (const sample of samples) {
+    const distance = Math.abs(sample.y - end.y);
+    const anchorDistance = Math.abs(anchor.y - end.y);
+    const closerToBaseline = anchorDistance < 10
+      ? distance > anchorDistance
+      : distance >= 10 && distance < anchorDistance;
+    if (closerToBaseline) anchor = sample;
+  }
+  if (anchor.y === end.y) return end.x;
+  return end.x + ((end.x - anchor.x) * (y - end.y)) / (end.y - anchor.y);
 }`;
 
 export const pidControllerImplementation = `/**
@@ -456,7 +549,7 @@ export const laneInterpretationImplementation = `/**
  *
  * This simpler helper samples the current lane boundaries at near, mid, and far
  * lookahead points. For sharper curves or lane-change experiments, try
- * analyzeLaneRegression or analyzeTargetLane instead.
+ * analyzeLaneRegression instead.
  *
  * @param laneLines Detected lane-line samples around the ego lane.
  * @returns Interpreted lane geometry for steering control.
@@ -541,19 +634,6 @@ function accelerationFeedforward(
 }`;
 
 export const curveRegressionImplementation = `/**
- * Fits the nearest 3–21 meters of the target lane for steering by default.
- * Use preview mode for the longer forward fit when planning speed.
- *
- * @param input Current sensor snapshot.
- * @param mode Local steering geometry (default), or a longer speed-planning preview.
- * @returns Lane geometry for input.targetLane relative to the ego lane.
- */
-function analyzeTargetLane(input: AutopilotInput, mode: 'local' | 'preview' = 'local'): LaneAnalysis {
-  const relativeTargetLane = input.targetLane - input.ego.laneIndex;
-  return analyzeLaneRegression(input.laneLines, relativeTargetLane, mode);
-}
-
-/**
  * Converts lane curvature into a steering feedforward term.
  *
  * Use this alongside PID feedback so the controller begins turning before a
@@ -575,15 +655,25 @@ function curvatureSteeringFeedforward(
 export const adaptiveCruiseImplementation = `/**
  * Reduces target speed when following another vehicle too closely.
  *
+ * Pass the lane you are moving into as relativeLane during a lane change and
+ * the closer lead of the two lanes is followed, so the change doesn't run into
+ * the new lane's traffic.
+ *
  * @param input Current sensor snapshot.
  * @param freeRoadSpeed Desired speed when there is no close lead vehicle.
+ * @param relativeLane Lane being moved into, relative to ego: -1 left, 0 none, 1 right.
  * @returns A target speed in meters per second.
  */
 function adaptiveCruiseTargetSpeed(
   input: AutopilotInput,
-  freeRoadSpeed: number
+  freeRoadSpeed: number,
+  relativeLane = 0
 ): number {
-  const lead = closestVehicleAhead(input.vehicles, input.ego.laneIndex);
+  const leads = [closestVehicleAhead(input.vehicles, input.laneLines)];
+  if (relativeLane !== 0) leads.push(closestVehicleAhead(input.vehicles, input.laneLines, relativeLane));
+  const lead = leads
+    .filter((vehicle): vehicle is VehicleDetection => vehicle !== undefined)
+    .sort((a, b) => a.relativeY - b.relativeY)[0];
   if (!lead) return freeRoadSpeed;
 
   const leadSpeed = input.ego.speed + lead.relativeVy;
@@ -594,6 +684,154 @@ function adaptiveCruiseTargetSpeed(
   return Math.max(4, Math.min(freeRoadSpeed, leadSpeed + gapError * 0.35));
 }`;
 
+export const laneSelectionImplementation = `/**
+ * Tuning options for createLaneChooser.
+ */
+interface LaneChooserOptions {
+  /** Minimum speed gain, in m/s, an adjacent lane must offer before switching. Default: 2. */
+  minSpeedGain?: number;
+  /** Meters ahead to look for the vehicle that sets each lane's speed. Default: 60. */
+  lookahead?: number;
+  /** Speed in m/s assumed for a lane with nobody ahead within the lookahead. Set it to your cruise speed. Default: 29. */
+  openLaneSpeed?: number;
+  /** Center-to-center clearance in meters needed ahead in the new lane. Default: 10. */
+  minFrontGap?: number;
+  /** Center-to-center clearance in meters needed behind in the new lane, plus 1.5 s of closing speed. Default: 10. */
+  minRearGap?: number;
+  /** Seconds to wait after a lane change finishes or is abandoned before choosing again. Default: 3. */
+  cooldown?: number;
+  /** Number of lanes on the road. Default: 3. */
+  laneCount?: number;
+}
+
+/** Stateful lane chooser returned by createLaneChooser. */
+interface LaneChooser {
+  /**
+   * Call once per tick. Returns the lane to steer toward relative to ego:
+   * -1 left, 0 the current lane, 1 right.
+   */
+  update(input: AutopilotInput): number;
+  /** Forgets any lane change in progress and the cooldown. */
+  reset(): void;
+}
+
+/**
+ * Creates a chooser that moves to whichever adjacent lane's traffic is fastest.
+ *
+ * A lane's speed is the speed of the closest vehicle ahead in it, within the
+ * lookahead, or openLaneSpeed when nobody is there. An adjacent lane is chosen
+ * only when it is at least minSpeedGain faster than the current lane and has
+ * room to merge.
+ *
+ * Once a change starts, the chooser keeps returning that lane until ego crosses
+ * into it, then returns 0 so you settle in the new lane's center. If the new
+ * lane stops having room partway, it returns 0 to send ego back. After either,
+ * it waits for the cooldown before choosing again.
+ *
+ * The chooser only picks a lane: your steering has to follow it, for example
+ * analyzeLaneRegression(input.laneLines, relativeLane). Keep the returned object
+ * outside autopilot(input) so its state survives between ticks.
+ *
+ * @param options Tuning. Every field is optional:
+ * @param options.minSpeedGain Minimum speed gain, in m/s, an adjacent lane must offer before switching. Default 2.
+ * @param options.lookahead Meters ahead to look for the vehicle that sets each lane's speed. Default 60.
+ * @param options.openLaneSpeed Speed, in m/s, assumed for a lane with nobody ahead within the lookahead. Set it to your cruise speed. Default 29.
+ * @param options.minFrontGap Center-to-center clearance, in meters, needed ahead in the new lane. Default 10.
+ * @param options.minRearGap Center-to-center clearance, in meters, needed behind in the new lane, plus 1.5 s of the rear vehicle's closing speed. Default 10.
+ * @param options.cooldown Seconds to wait after a lane change finishes or is abandoned before choosing again. Default 3.
+ * @param options.laneCount Number of lanes on the road. Default 3.
+ * @returns A chooser whose update(input) returns the lane to steer toward relative to ego (-1 left, 0 current, 1 right), and whose reset() clears its state.
+ */
+function createLaneChooser(options: LaneChooserOptions = {}): LaneChooser {
+  const minSpeedGain = options.minSpeedGain ?? 2;
+  const lookahead = options.lookahead ?? 60;
+  const openLaneSpeed = options.openLaneSpeed ?? 29;
+  const minFrontGap = options.minFrontGap ?? 10;
+  const minRearGap = options.minRearGap ?? 10;
+  const cooldown = options.cooldown ?? 3;
+  const laneCount = options.laneCount ?? 3;
+  // Absolute lane index being moved into, or undefined when holding the current lane.
+  let targetLane: number | undefined;
+  let cooldownRemaining = 0;
+
+  return {
+    update(input: AutopilotInput): number {
+      const currentLane = input.ego.laneIndex;
+      cooldownRemaining = Math.max(0, cooldownRemaining - input.dt);
+
+      if (targetLane !== undefined) {
+        const relativeTarget = targetLane - currentLane;
+        if (relativeTarget === 0 || Math.abs(relativeTarget) > 1) {
+          // Arrived, or ego ended up somewhere else entirely: either way the change is over.
+          targetLane = undefined;
+          cooldownRemaining = cooldown;
+        } else if (hasRoomToMerge(input, relativeTarget, minFrontGap, minRearGap)) {
+          return relativeTarget;
+        } else {
+          // The new lane filled up: head back and wait before trying again.
+          targetLane = undefined;
+          cooldownRemaining = cooldown;
+          return 0;
+        }
+      }
+      if (cooldownRemaining > 0) return 0;
+
+      const currentSpeed = laneTrafficSpeed(input, 0, lookahead, openLaneSpeed);
+      let bestRelativeLane = 0;
+      let bestSpeed = currentSpeed;
+      // Left is checked first, so it wins ties, matching the usual passing side.
+      for (const relativeLane of [-1, 1]) {
+        const lane = currentLane + relativeLane;
+        if (lane < 0 || lane >= laneCount) continue;
+        const speed = laneTrafficSpeed(input, relativeLane, lookahead, openLaneSpeed);
+        if (speed - currentSpeed < minSpeedGain || speed <= bestSpeed) continue;
+        if (!hasRoomToMerge(input, relativeLane, minFrontGap, minRearGap)) continue;
+        bestRelativeLane = relativeLane;
+        bestSpeed = speed;
+      }
+      if (bestRelativeLane !== 0) targetLane = currentLane + bestRelativeLane;
+      return bestRelativeLane;
+    },
+
+    reset(): void {
+      targetLane = undefined;
+      cooldownRemaining = 0;
+    },
+  };
+}
+
+/**
+ * Speed of the closest vehicle ahead in a lane, or openLaneSpeed when the lane
+ * is empty within the lookahead.
+ */
+function laneTrafficSpeed(
+  input: AutopilotInput,
+  relativeLane: number,
+  lookahead: number,
+  openLaneSpeed: number
+): number {
+  const lead = closestVehicleAhead(input.vehicles, input.laneLines, relativeLane);
+  if (!lead || lead.relativeY > lookahead) return openLaneSpeed;
+  return input.ego.speed + lead.relativeVy;
+}
+
+/**
+ * Checks that no vehicle in the lane is too close ahead, or too close behind
+ * given how fast it is closing on ego.
+ */
+function hasRoomToMerge(
+  input: AutopilotInput,
+  relativeLane: number,
+  minFrontGap: number,
+  minRearGap: number
+): boolean {
+  return filterVehiclesInLane(input.vehicles, input.laneLines, relativeLane).every(vehicle => {
+    if (vehicle.relativeY >= 0) return vehicle.relativeY >= minFrontGap;
+    const closingSpeed = Math.max(0, vehicle.relativeVy);
+    return -vehicle.relativeY >= minRearGap + closingSpeed * 1.5;
+  });
+}`;
+
 export const toolboxLibrarySource = [
   clampImplementation,
   vehicleFilteringImplementation,
@@ -602,5 +840,6 @@ export const toolboxLibrarySource = [
   accelerationFeedforwardImplementation,
   curveRegressionImplementation,
   adaptiveCruiseImplementation,
+  laneSelectionImplementation,
   vehicleTrackerImplementation,
 ].join('\n\n');

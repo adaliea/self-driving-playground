@@ -19,8 +19,8 @@ export {
   builtInAssistLaneKeeping,
   builtInAssistSpeedControl,
   builtInLaneCentering,
-  builtInSpeedControl,
   closestVehicleAhead,
+  isVehicleInLane,
   sanitizeAutopilotOutput,
   trafficAutopilot,
 } from './controllers';

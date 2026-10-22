@@ -41,7 +41,7 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
 
       <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-6">
         <Metric label="Speed" value={speed.toFixed(1)} unit="mph" />
-        <Metric label="Lane" value={`${telemetry?.laneIndex ?? 0} → ${telemetry?.targetLane ?? 0}`} />
+        <Metric label="Lane" value={`${telemetry?.laneIndex ?? 0}`} />
         <Metric label="Motor cmd" value={formatSigned(telemetry?.finalMotor ?? 0)} assisted={telemetry?.motorOverridden} />
         <Metric label="Motor actual" value={formatSigned(telemetry?.actualMotor ?? 0)} />
         <Metric label="Steer cmd" value={formatSigned(telemetry?.finalSteering ?? 0)} assisted={telemetry?.steerOverridden} />

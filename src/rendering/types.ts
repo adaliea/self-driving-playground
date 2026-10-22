@@ -74,7 +74,6 @@ export interface RenderTelemetry {
   speed: number;
   speedMph: number;
   laneIndex: number;
-  targetLane: number;
   userMotor: number;
   userSteering: number;
   finalMotor: number;

@@ -47,7 +47,6 @@ function measurement(relativeX: number, relativeY: number): VehicleMeasurement {
     width: 2,
     length: 4.6,
     confidence: 0.9,
-    laneIndex: 1,
     uncertainty: {
       lateralPosition: 0.12,
       longitudinalPosition: 0.5,

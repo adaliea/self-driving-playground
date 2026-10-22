@@ -3,7 +3,7 @@ import ts from 'typescript';
 import sandboxHtml from '../../public/sandbox.html?raw';
 import { analyzeLaneDetectionsForTarget } from '../simulation/controllers';
 import { clampImplementation, curveRegressionImplementation } from '../toolbox/library';
-import type { AutopilotInput, LaneAnalysis, LaneLineDetections } from '../types';
+import type { LaneAnalysis, LaneLineDetections } from '../types';
 
 // Execute the helper source shipped to the sandbox, including the toolbox wrapper.
 const helperStart = sandboxHtml.indexOf('const __clamp =');
@@ -11,12 +11,11 @@ const helperEnd = sandboxHtml.indexOf('${code}', helperStart);
 const toolbox = ts.transpileModule(clampImplementation + curveRegressionImplementation, {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText;
-const { regression, target } = new Function(
+const { regression } = new Function(
   sandboxHtml.slice(helperStart, helperEnd) + toolbox +
-  '\nreturn { regression: analyzeLaneRegression, target: analyzeTargetLane };',
+  '\nreturn { regression: analyzeLaneRegression };',
 )() as {
   regression: (lines: LaneLineDetections, relativeLane?: number, mode?: 'local' | 'preview') => LaneAnalysis;
-  target: (input: AutopilotInput, mode?: 'local' | 'preview') => LaneAnalysis;
 };
 
 function linesFor(center: (y: number) => number): LaneLineDetections {
@@ -48,16 +47,10 @@ describe('user-facing lane regression', () => {
     expect(lane.curvature).toBeCloseTo(0, 8);
   });
 
-  it.each([-1, 0, 1])('matches simulator geometry and toolbox lane selection for lane %s', (relativeLane) => {
+  it.each([-1, 0, 1])('matches simulator geometry for lane %s', (relativeLane) => {
     const lines = linesFor((y) => 0.2 + 0.03 * y + 0.008 * Math.max(0, y - 24) ** 2);
-    const input: AutopilotInput = {
-      dt: 1 / 45, ego: { speed: 24, heading: 0, laneIndex: 1 },
-      laneLines: lines, vehicles: [], vehicleMeasurements: [], targetLane: 1 + relativeLane,
-    };
-    expect(target(input)).toEqual(regression(lines, relativeLane));
     for (const mode of ['local', 'preview'] as const) {
       const lane = regression(lines, relativeLane, mode);
-      expect(target(input, mode)).toEqual(lane);
       const simulationLane = analyzeLaneDetectionsForTarget(lines, relativeLane, mode);
       for (const field of ['centerOffset', 'heading', 'curvature', 'confidence'] as const) {
         expect(lane[field]).toBeCloseTo(simulationLane[field], 10);

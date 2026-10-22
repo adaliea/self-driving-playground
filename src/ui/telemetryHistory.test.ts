@@ -3,7 +3,7 @@ import type { RenderTelemetry } from '../rendering';
 import { recordTelemetry, type TelemetryHistory } from './telemetryHistory';
 
 const telemetry: RenderTelemetry = {
-  time: 1, speed: 10, speedMph: 22.4, laneIndex: 1, targetLane: 1,
+  time: 1, speed: 10, speedMph: 22.4, laneIndex: 1,
   userMotor: 0.3, finalMotor: 0.5, actualMotor: 0.4,
   userSteering: 0.1, finalSteering: 0.2, actualSteering: 0.15,
   steerOverridden: true, motorOverridden: true, invalidFields: [], collisions: 0,

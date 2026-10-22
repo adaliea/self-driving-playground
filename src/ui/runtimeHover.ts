@@ -234,7 +234,6 @@ export function formatToolboxInspection(
       break;
     case 'analyzeLane':
     case 'analyzeLaneRegression':
-    case 'analyzeTargetLane':
       lines.push(...formatLane(details));
       break;
     case 'closestVehicleAhead':
@@ -322,7 +321,7 @@ function formatVehicle(details: Record<string, RuntimeValuePreview>): string[] {
     '',
     ...table([
       ['Vehicle', stringAt(vehicle, ['id'])],
-      ['Lane', number(details.laneIndex)],
+      ['Relative lane', number(details.relativeLane)],
       ['Gap', distance(vehicle, ['relativeY'])],
       ['Lateral offset', distance(vehicle, ['relativeX'])],
       ['Relative yaw', relativeHeading === undefined ? '—' : `${formatNumber(relativeHeading * 180 / Math.PI, 1)}°`],

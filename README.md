@@ -71,7 +71,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   return {
     motor: 0,
     steering: 0,
-    targetLane: input.targetLane,
   };
 }
 ```
@@ -107,7 +106,7 @@ Known simplifications:
 - Tire dynamics, suspension, and exact collision geometry are intentionally simplified.
 - Traffic decisions are local heuristics rather than full planning.
 - Lane samples are generated from known road geometry with perception noise, not image processing.
-- Ego lane-changing UI is not exposed yet, although `targetLane` exists in the API.
+- The player car has no declared target lane. To change lanes, steer toward an adjacent lane yourself (for example with `createLaneChooser` and `analyzeLaneRegression(input.laneLines, relativeLane)`). For collision blame, a player belongs to the lane it last settled in (centered and aligned), so drifting across a line without settling is judged as leaving your lane.
 
 ## Built-In Examples
 
@@ -119,6 +118,7 @@ The app includes:
 - Adaptive cruise
 - Lane keeping with `Accelerate for me`
 - Speed control with `Steer for me`
+- Fastest lane (lane changes with a configurable minimum speed differential)
 - Intentionally bad oscillating controller
 
 The default example is a working PID lane-keeping controller with comments explaining the P, I, and D terms. PID terms appear automatically in telemetry, labeled with the controller variable name (for example, `lanePid` or `speedPid`). No debug configuration or return fields are needed. Each PID card includes a collapsed-by-default 30-second history graph of error, P, I, D, their sum, and the limited output. ECharts provides hover inspection, wheel zoom, drag panning, a range slider, and image export. Error uses a separate scale from output contributions. Open **Explore telemetry** for a single fullscreen graph workspace. The **Lead vehicle** group includes estimated forward speed, relative forward/lateral velocity, distance ahead, and lateral offset from the same tracked vehicle the controller sees. Missing leads produce gaps; positive relative forward velocity means the lead is pulling away. Select any combination of speed, lead vehicle, motor, steering, and PID signals from the searchable signal list. Add, rename, or remove graph tabs for separate selections, and adjust graph height. Vehicle plots compare autopilot commands, commands after assists, and actual actuation. History records while graphs are closed; **Hold history** freezes the view without pausing the simulation. Graphs use simulation time and reset when the simulation resets or code changes.
@@ -133,12 +133,13 @@ The toolbox panel provides inspectable TypeScript helpers from a virtual `autopi
 - lane-line interpretation
 - acceleration feedforward
 - adaptive cruise target-speed snippet
+- stateful fastest-lane chooser (`createLaneChooser`)
 
 Each helper can insert a short usage example at the bottom of the editor. The implementations stay out of `Autopilot.ts`, but Monaco can still navigate to them with Go to Definition / Ctrl-click, opening the read-only toolbox file at the definition.
 
 ### Local lane regression and preview
 
-`analyzeLaneRegression(input.laneLines)` and `analyzeTargetLane(input)` default to
+`analyzeLaneRegression(input.laneLines)` defaults to
 fitting the nearest 3–21 meters of lane samples and estimating geometry at ego.
 Use this local geometry for steering so distant corner entries and exits do not
 advance the steering response. Existing calls receive this behavior automatically.
@@ -146,9 +147,9 @@ advance the steering response. Existing calls receive this behavior automaticall
 For the original longer 5–56 meter fit, select `"preview"` when planning speed:
 
 ```ts
-const lane = analyzeTargetLane(input); // Local steering geometry.
-const preview = analyzeTargetLane(input, "preview"); // Upcoming road geometry.
-// The built-in helper also accepts the mode directly:
-const relativeLane = input.targetLane - input.ego.laneIndex;
-const previewLane = analyzeLaneRegression(input.laneLines, relativeLane, "preview");
+const lane = analyzeLaneRegression(input.laneLines); // Local steering geometry.
+const preview = analyzeLaneRegression(input.laneLines, 0, "preview"); // Upcoming road geometry.
+// Pass -1 or 1 to analyze an adjacent lane, e.g. the one a lane chooser returns:
+const relativeLane = laneChooser.update(input);
+const nextLane = analyzeLaneRegression(input.laneLines, relativeLane);
 ```

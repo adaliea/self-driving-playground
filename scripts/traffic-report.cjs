@@ -74,7 +74,7 @@ function runScenario(seed, trafficDensity, durationSeconds, warmupSeconds, egoSt
 
   for (let step = 0; step < steps; step += 1) {
     const input = simulation.createEgoInput(settings, FIXED_TIMESTEP);
-    simulation.step(FIXED_TIMESTEP, { motor: 0, steering: 0, targetLane: input.targetLane }, settings);
+    simulation.step(FIXED_TIMESTEP, { motor: 0, steering: 0 }, settings);
     const state = simulation.getDebugState();
     const ego = state.vehicles.find((vehicle) => vehicle.kind === 'ego');
     if (!ego) throw new Error('Missing ego vehicle in debug state.');

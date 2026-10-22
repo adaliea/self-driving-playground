@@ -13,7 +13,7 @@ describe('runtime inspection compiler transform', () => {
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   const lane = analyzeLane(input.laneLines);
   const steering = clamp(lane.centerOffset, -1, 1);
-  return { motor: 0, steering, targetLane: input.targetLane };
+  return { motor: 0, steering };
 }`);
 
     expect(result.errors).toEqual([]);
@@ -31,7 +31,6 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
         farLeft: [],
         farRight: [],
       },
-      targetLane: 1,
     });
 
     const laneBinding = result.inspection.bindings.find((binding) => binding.name === 'lane')!;

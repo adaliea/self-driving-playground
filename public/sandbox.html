@@ -158,28 +158,36 @@
                   }
                   case 'analyzeLane':
                   case 'analyzeLaneRegression':
-                  case 'analyzeTargetLane':
                     return {
                       centerOffset: result && result.centerOffset,
                       heading: result && result.heading,
                       curvature: result && result.curvature,
                       confidence: result && result.confidence,
-                      relativeTargetLane: record.name === 'analyzeLaneRegression'
-                        ? (args[1] === undefined ? 0 : args[1])
-                        : record.name === 'analyzeTargetLane' && args[0]
-                        ? Number(args[0].targetLane) - Number(args[0].ego && args[0].ego.laneIndex)
-                        : 0
+                      relativeTargetLane: record.name === 'analyzeLaneRegression' && args[1] !== undefined ? args[1] : 0
                     };
                   case 'closestVehicleAhead':
-                    return { laneIndex: args[1], vehicle: result };
+                    return { relativeLane: args[2] === undefined ? 0 : args[2], vehicle: result };
                   case 'adaptiveCruiseTargetSpeed': {
                     const input = args[0] || {};
                     const freeRoadSpeed = args[1];
                     const ego = input.ego || {};
                     const vehicles = Array.isArray(input.vehicles) ? input.vehicles : [];
+                    const laneLines = input.laneLines || {};
+                    // Approximates the toolbox's isVehicleInLane: any part of the box between ego's lane lines.
+                    const lineX = (samples, y, fallback) => {
+                      if (!Array.isArray(samples) || samples.length === 0) return fallback;
+                      let nearest = samples[0];
+                      for (const sample of samples) if (Math.abs(sample.y - y) < Math.abs(nearest.y - y)) nearest = sample;
+                      return Number(nearest.x);
+                    };
                     let lead;
                     for (const vehicle of vehicles) {
-                      if (!vehicle || vehicle.laneIndex !== ego.laneIndex || !(vehicle.relativeY > 0)) continue;
+                      if (!vehicle || !(vehicle.relativeY > 0)) continue;
+                      const left = lineX(laneLines.left, vehicle.relativeY, -1.85);
+                      const right = lineX(laneLines.right, vehicle.relativeY, 1.85);
+                      const yaw = Number(vehicle.relativeHeading || 0);
+                      const halfExtent = (Math.abs(Math.cos(yaw)) * vehicle.width + Math.abs(Math.sin(yaw)) * vehicle.length) / 2;
+                      if (vehicle.relativeX + halfExtent <= left || vehicle.relativeX - halfExtent >= right) continue;
                       if (!lead || vehicle.relativeY < lead.relativeY) lead = vehicle;
                     }
                     return {
