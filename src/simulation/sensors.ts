@@ -73,6 +73,7 @@ export class SensorSimulator {
     dt: number,
   ): AutopilotInput {
     road.extendTo(subject.s + 180);
+    this.pruneYawHistory(vehicles);
     const laneIndex = road.getLaneIndex(subject.lateral);
     const ego = {
       speed: subject.speed,
@@ -275,6 +276,15 @@ export class SensorSimulator {
     const yawRate = normalizeAngle(worldHeading - previous) / dt;
     // Respawns and resets jump the pose; physical yaw rates stay well under 1 rad/s.
     return Math.abs(yawRate) > 3 ? 0 : yawRate;
+  }
+
+  /** Respawned traffic gets fresh ids, so drop yaw history for vehicles that left the world. */
+  private pruneYawHistory(vehicles: VehicleState[]): void {
+    if (this.previousWorldHeadings.size <= vehicles.length) return;
+    const live = new Set(vehicles.map((vehicle) => vehicle.id));
+    for (const id of this.previousWorldHeadings.keys()) {
+      if (!live.has(id)) this.previousWorldHeadings.delete(id);
+    }
   }
 
   private getMeasurementNoiseMap(subjectId: string): Map<string, MeasurementNoiseState> {

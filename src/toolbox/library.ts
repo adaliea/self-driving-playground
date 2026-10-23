@@ -102,7 +102,7 @@ function createVehicleTracker(options: VehicleTrackerOptions = {}): VehicleTrack
         }
         egoMotion = { dt: safeDt, yawDelta, roadCurvature, previousSpeed, speed: ego.speed };
       }
-      previousEgo = ego;
+      previousEgo = ego && { ...ego };
 
       for (const state of states.values()) {
         predictVehicleTrackerAxis(state.x, safeDt, accelerationStdDev);
