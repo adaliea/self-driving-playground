@@ -3,6 +3,7 @@ import { normalizeAngle } from './math';
 import { SeededRandom } from './random';
 import { Road } from './road';
 import { SensorSimulator } from './sensors';
+import { VehicleTracker } from './vehicleTracker';
 import type { VehicleState } from './vehicle';
 
 describe('vehicle pose sensing', () => {
@@ -118,6 +119,94 @@ describe('vehicle pose sensing', () => {
     expect(Math.abs(lagOneCorrelation(residuals))).toBeLessThan(0.18);
   });
 });
+
+describe('ego yaw rate and ego-motion-compensated tracking', () => {
+  it('reports world yaw rate, including road curvature, as the per-tick world heading change', () => {
+    const road = new Road(5);
+    const s = sharpestCurveStation(road);
+    const ego = vehicle('ego', 'ego', s, 0, 0.02, 25);
+    const sensors = new SensorSimulator();
+    const settings = { noisyLaneLines: false, noisyVehicles: false };
+    const dt = 1 / 45;
+    const first = sensors.createInput(ego, [ego], road, settings, new SeededRandom(1), dt);
+    const headingBefore = road.worldPointAt(ego.s, ego.lateral).heading + ego.headingOffset;
+    ego.s += ego.speed * dt;
+    ego.headingOffset = 0.03;
+    const second = sensors.createInput(ego, [ego], road, settings, new SeededRandom(1), dt);
+    const headingAfter = road.worldPointAt(ego.s, ego.lateral).heading + ego.headingOffset;
+
+    expect(first.ego.yawRate).toBe(0);
+    expect(second.ego.yawRate * dt).toBeCloseTo(normalizeAngle(headingAfter - headingBefore), 12);
+    // The road-relative heading moved 0.01 rad; the rest of the yaw is the road curving.
+    expect(Math.abs(second.ego.yawRate * dt - 0.01)).toBeGreaterThan(0.002);
+    expect(second.ego.heading - first.ego.heading).toBeCloseTo(0.01, 12);
+  });
+
+  it('keeps built-in tracks on target through a curve with a lane change', () => {
+    const road = new Road(5);
+    const dt = 1 / 45;
+    const startS = sharpestCurveStation(road) - 120;
+    const laneWidth = road.getLaneCenterOffset(1) - road.getLaneCenterOffset(0);
+    const egoLane = road.getLaneCenterOffset(1);
+    const ego = vehicle('ego', 'ego', startS, egoLane, 0, 24);
+    const targets = [
+      vehicle('lead', 'traffic', startS + 35, egoLane, 0, 21),
+      vehicle('left', 'traffic', startS + 12, road.getLaneCenterOffset(0), 0, 27),
+      vehicle('right', 'traffic', startS + 55, road.getLaneCenterOffset(2), 0, 19),
+    ];
+    const all = [ego, ...targets];
+    const sensors = new SensorSimulator();
+    const truthSensors = new SensorSimulator();
+    const legacy = new VehicleTracker();
+    const rng = new NoDropoutRandom(77);
+    const errors = { compensated: 0, legacy: 0, compensatedVelocity: 0, legacyVelocity: 0, count: 0 };
+
+    for (let t = 0; t < 10; t += dt) {
+      // Lane change to the right between 3 s and 6 s (smooth cosine lateral profile).
+      const phase = Math.min(1, Math.max(0, (t - 3) / 3));
+      const lateralRate = phase > 0 && phase < 1 ? (laneWidth * Math.PI * Math.sin(Math.PI * phase)) / 6 : 0;
+      ego.lateral = egoLane + (laneWidth * (1 - Math.cos(Math.PI * phase))) / 2;
+      ego.headingOffset = Math.atan2(lateralRate, ego.speed);
+      ego.s += ego.speed * dt;
+      for (const target of targets) target.s += target.speed * dt;
+
+      const input = sensors.createInput(ego, all, road, { noisyLaneLines: false, noisyVehicles: true }, rng, dt);
+      const legacyTracks = legacy.update(input.vehicleMeasurements, dt);
+      const truth = truthSensors.createTrafficInput(ego, all, road, new SeededRandom(1), dt).vehicles;
+      if (t < 1) continue;
+      for (const expected of truth) {
+        const compensated = input.vehicles.find((track) => track.id === expected.id);
+        const old = legacyTracks.find((track) => track.id === expected.id);
+        if (!compensated || !old) continue;
+        errors.compensated += (compensated.relativeX - expected.relativeX) ** 2 + (compensated.relativeY - expected.relativeY) ** 2;
+        errors.legacy += (old.relativeX - expected.relativeX) ** 2 + (old.relativeY - expected.relativeY) ** 2;
+        errors.compensatedVelocity +=
+          (compensated.relativeVx - expected.relativeVx) ** 2 + (compensated.relativeVy - expected.relativeVy) ** 2;
+        errors.legacyVelocity += (old.relativeVx - expected.relativeVx) ** 2 + (old.relativeVy - expected.relativeVy) ** 2;
+        errors.count += 1;
+      }
+    }
+
+    const rms = (sum: number) => Math.sqrt(sum / errors.count);
+    console.info(
+      `sensor pipeline curve + lane change RMS: position legacy ${rms(errors.legacy).toFixed(3)} m -> ` +
+        `compensated ${rms(errors.compensated).toFixed(3)} m; velocity legacy ${rms(errors.legacyVelocity).toFixed(3)} m/s -> ` +
+        `compensated ${rms(errors.compensatedVelocity).toFixed(3)} m/s`,
+    );
+    expect(errors.count).toBeGreaterThan(1000);
+    expect(rms(errors.compensated)).toBeLessThan(rms(errors.legacy) * 0.85);
+    expect(rms(errors.compensatedVelocity)).toBeLessThan(rms(errors.legacyVelocity) * 0.5);
+  });
+});
+
+/** Station of the tightest curve in the first few kilometers, so curvature effects are unmistakable. */
+function sharpestCurveStation(road: Road): number {
+  let best = 400;
+  for (let s = 400; s < 3000; s += 5) {
+    if (Math.abs(road.sampleAt(s).curvature) > Math.abs(road.sampleAt(best).curvature)) best = s;
+  }
+  return best;
+}
 
 class NoDropoutRandom extends SeededRandom {
   override chance(): boolean {

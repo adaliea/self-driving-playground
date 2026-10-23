@@ -66,6 +66,8 @@ interface EgoState {
   speed: number;
   /** Ego heading relative to the road/world frame, in radians. */
   heading: number;
+  /** Ego world yaw rate in radians per second (positive turns right), including road curvature. */
+  yawRate: number;
   /** Current lane index. For a 3-lane road, valid values are 0, 1, and 2. */
   laneIndex: number;
 }

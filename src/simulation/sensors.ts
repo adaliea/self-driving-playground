@@ -55,11 +55,13 @@ export class SensorSimulator {
   private readonly measurementNoise = new Map<string, Map<string, MeasurementNoiseState>>();
   private readonly vehicleTrackers = new Map<string, VehicleTracker>();
   private readonly trackerNoiseModes = new Map<string, boolean>();
+  private readonly previousWorldHeadings = new Map<string, number>();
 
   reset(): void {
     this.measurementNoise.clear();
     this.vehicleTrackers.clear();
     this.trackerNoiseModes.clear();
+    this.previousWorldHeadings.clear();
   }
 
   createInput(
@@ -75,6 +77,7 @@ export class SensorSimulator {
     const ego = {
       speed: subject.speed,
       heading: subject.headingOffset,
+      yawRate: this.measureYawRate(subject, road, dt),
       laneIndex,
     };
 
@@ -83,7 +86,7 @@ export class SensorSimulator {
     const previousNoiseMode = this.trackerNoiseModes.get(subject.id);
     if (previousNoiseMode !== undefined && previousNoiseMode !== settings.noisyVehicles) tracker.reset();
     this.trackerNoiseModes.set(subject.id, settings.noisyVehicles);
-    const tracks = tracker.update(observation.measurements, dt);
+    const tracks = tracker.update(observation.measurements, dt, ego);
 
     return {
       dt,
@@ -110,6 +113,7 @@ export class SensorSimulator {
       ego: {
         speed: subject.speed,
         heading: subject.headingOffset,
+        yawRate: this.measureYawRate(subject, road, dt),
         laneIndex,
       },
       vehicles: observation.truthTracks,
@@ -256,6 +260,21 @@ export class SensorSimulator {
     }
 
     return samples;
+  }
+
+  /**
+   * World yaw rate over the latest tick, as a backward difference of world heading.
+   * This is exactly the rotation of the ego frame between consecutive inputs, which
+   * is what a tracker must undo. headingOffset alone misses road curvature.
+   */
+  private measureYawRate(subject: VehicleState, road: Road, dt: number): number {
+    const worldHeading = road.worldPointAt(subject.s, subject.lateral).heading + subject.headingOffset;
+    const previous = this.previousWorldHeadings.get(subject.id);
+    this.previousWorldHeadings.set(subject.id, worldHeading);
+    if (previous === undefined || !(dt > 0)) return 0;
+    const yawRate = normalizeAngle(worldHeading - previous) / dt;
+    // Respawns and resets jump the pose; physical yaw rates stay well under 1 rad/s.
+    return Math.abs(yawRate) > 3 ? 0 : yawRate;
   }
 
   private getMeasurementNoiseMap(subjectId: string): Map<string, MeasurementNoiseState> {

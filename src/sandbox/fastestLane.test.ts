@@ -38,7 +38,7 @@ const car = (relativeLane: number, relativeY: number, speed: number): VehicleTra
 
 function input(vehicles: VehicleTrack[], laneIndex = 1): AutopilotInput {
   return {
-    dt: 1 / 45, ego: { speed: 25, heading: 0, laneIndex },
+    dt: 1 / 45, ego: { speed: 25, heading: 0, yawRate: 0, laneIndex },
     vehicles, vehicleMeasurements: [], laneLines,
   };
 }

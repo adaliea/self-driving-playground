@@ -33,12 +33,13 @@ const safeMotor = clamp(motor, -1, 1);`,
     id: 'vehicle-tracker',
     title: 'Kalman Vehicle Tracker',
     category: 'Estimation',
-    description: 'Builds stable constant-velocity tracks from intermittent raw vehicle measurements.',
+    description: 'Builds stable constant-velocity tracks from intermittent raw vehicle measurements, compensating for ego turns.',
     implementation: vehicleTrackerImplementation,
     usage: `const tracker = createVehicleTracker();
 
 export function autopilot(input: AutopilotInput): AutopilotOutput {
-  const myTracks = tracker.update(input.vehicleMeasurements, input.dt);
+  // Passing input.ego lets prediction undo ego turns and speed changes.
+  const myTracks = tracker.update(input.vehicleMeasurements, input.dt, input.ego);
   const lead = closestVehicleAhead(myTracks, input.laneLines);
   // Compare myTracks with the built-in input.vehicles tracks.
   return { motor: lead && lead.relativeY < 25 ? -0.2 : 0.3, steering: 0 };

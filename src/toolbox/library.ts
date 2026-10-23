@@ -25,8 +25,15 @@ interface VehicleTrackerOptions {
 
 /** Stateful tracker returned by createVehicleTracker. */
 interface VehicleTracker {
-  /** Predicts existing tracks, incorporates this frame's measurements, and returns current tracks. */
-  update(measurements: VehicleMeasurement[], dt: number): VehicleTrack[];
+  /**
+   * Predicts existing tracks, incorporates this frame's measurements, and returns current tracks.
+   *
+   * Pass input.ego so prediction can undo ego motion: tracks live in the ego
+   * frame, which rotates whenever ego turns (lane changes and road curves), and
+   * without ego.yawRate a constant-velocity model mistakes that rotation for
+   * every other car swinging sideways.
+   */
+  update(measurements: VehicleMeasurement[], dt: number, ego?: EgoState): VehicleTrack[];
   /** Removes all track history. */
   reset(): void;
 }
@@ -37,6 +44,17 @@ interface VehicleTrackerAxisState {
   p00: number;
   p01: number;
   p11: number;
+}
+
+/** How the ego frame moved since the previous update. */
+interface VehicleTrackerEgoMotion {
+  dt: number;
+  /** World yaw change of ego over the tick, in radians. */
+  yawDelta: number;
+  /** Road curvature in 1/m (positive curves right), so other cars can follow the curve too. */
+  roadCurvature: number;
+  previousSpeed: number;
+  speed: number;
 }
 
 interface VehicleTrackerState {
@@ -65,14 +83,31 @@ function createVehicleTracker(options: VehicleTrackerOptions = {}): VehicleTrack
   const states = new Map<string, VehicleTrackerState>();
   const maxPredictionTime = options.maxPredictionTime ?? 0.42;
   const accelerationStdDev = options.accelerationStdDev ?? 3.2;
+  let previousEgo: EgoState | undefined;
+  let roadCurvature = 0;
 
   return {
-    update(measurements: VehicleMeasurement[], dt: number): VehicleTrack[] {
+    update(measurements: VehicleMeasurement[], dt: number, ego?: EgoState): VehicleTrack[] {
       const safeDt = clamp(dt, 0, 0.25);
+      let egoMotion: VehicleTrackerEgoMotion | undefined;
+      if (ego) {
+        // Physical yaw rates stay under 1 rad/s; anything faster is a reset.
+        const yawDelta = Math.abs(ego.yawRate) < 3 ? ego.yawRate * safeDt : 0;
+        const previousSpeed = previousEgo ? previousEgo.speed : ego.speed;
+        // ego.heading is road-relative, so yaw it doesn't explain is the road curving.
+        const roadDistance = 0.5 * (previousSpeed + ego.speed) * safeDt * Math.cos(ego.heading);
+        if (previousEgo && roadDistance > 0.05) {
+          const roadTurn = yawDelta - normalizeTrackerAngle(ego.heading - previousEgo.heading);
+          roadCurvature = clamp(roadTurn / roadDistance, -0.04, 0.04);
+        }
+        egoMotion = { dt: safeDt, yawDelta, roadCurvature, previousSpeed, speed: ego.speed };
+      }
+      previousEgo = ego;
 
       for (const state of states.values()) {
         predictVehicleTrackerAxis(state.x, safeDt, accelerationStdDev);
         predictVehicleTrackerAxis(state.y, safeDt, accelerationStdDev);
+        if (egoMotion) compensateVehicleTrackerEgoMotion(state, egoMotion);
         state.headingVariance += Math.pow(5 * Math.PI / 180, 2) * safeDt;
         state.age += safeDt;
         state.timeSinceMeasurement += safeDt;
@@ -123,6 +158,8 @@ function createVehicleTracker(options: VehicleTrackerOptions = {}): VehicleTrack
 
     reset(): void {
       states.clear();
+      previousEgo = undefined;
+      roadCurvature = 0;
     },
   };
 }
@@ -179,6 +216,48 @@ function predictVehicleTrackerAxis(
     0.25 * Math.pow(dt, 4) * accelerationVariance;
   axis.p01 += dt * oldP11 + 0.5 * Math.pow(dt, 3) * accelerationVariance;
   axis.p11 += Math.pow(dt, 2) * accelerationVariance;
+}
+
+/**
+ * Moves a freshly predicted track from last tick's ego frame into this tick's.
+ *
+ * The constant-velocity step assumed ego drove straight at its old speed. Here
+ * we use where ego actually went (a short arc) and rotate position by the ego
+ * yaw change. Velocity is the target's world velocity (relative velocity plus
+ * ego speed) minus ego's speed: the world part rotates with the frame, less
+ * the turn the target makes by following the road curve, then ego's new speed
+ * is subtracted. Each covariance block is rotated too, keeping per-axis
+ * variances so x and y stay separate filters.
+ */
+function compensateVehicleTrackerEgoMotion(
+  state: VehicleTrackerState,
+  ego: VehicleTrackerEgoMotion
+): void {
+  const cos = Math.cos(ego.yawDelta);
+  const sin = Math.sin(ego.yawDelta);
+  const egoDistance = 0.5 * (ego.previousSpeed + ego.speed) * ego.dt;
+  const x = state.x.position - egoDistance * Math.sin(ego.yawDelta / 2);
+  const y = state.y.position + ego.previousSpeed * ego.dt - egoDistance * Math.cos(ego.yawDelta / 2);
+  state.x.position = x * cos - y * sin;
+  state.y.position = x * sin + y * cos;
+
+  const worldVx = state.x.velocity;
+  const worldVy = state.y.velocity + ego.previousSpeed;
+  const targetTurn = ego.roadCurvature * worldVy * ego.dt;
+  const vCos = Math.cos(ego.yawDelta - targetTurn);
+  const vSin = Math.sin(ego.yawDelta - targetTurn);
+  state.x.velocity = worldVx * vCos - worldVy * vSin;
+  state.y.velocity = worldVx * vSin + worldVy * vCos - ego.speed;
+  state.heading = normalizeTrackerAngle(state.heading - ego.yawDelta + targetTurn);
+
+  const x00 = state.x.p00, x01 = state.x.p01, x11 = state.x.p11;
+  const y00 = state.y.p00, y01 = state.y.p01, y11 = state.y.p11;
+  state.x.p00 = cos * cos * x00 + sin * sin * y00;
+  state.x.p01 = cos * vCos * x01 + sin * vSin * y01;
+  state.x.p11 = vCos * vCos * x11 + vSin * vSin * y11;
+  state.y.p00 = sin * sin * x00 + cos * cos * y00;
+  state.y.p01 = sin * vSin * x01 + cos * vCos * y01;
+  state.y.p11 = vSin * vSin * x11 + vCos * vCos * y11;
 }
 
 function updateVehicleTrackerAxis(

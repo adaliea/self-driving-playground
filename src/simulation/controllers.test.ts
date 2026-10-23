@@ -12,7 +12,7 @@ function inputForCenter(center: (y: number) => number): AutopilotInput {
     right: boundary(1.85), farRight: boundary(5.55),
   };
   return {
-    dt: 1 / 45, ego: { speed: 24, heading: 0, laneIndex: 1 },
+    dt: 1 / 45, ego: { speed: 24, heading: 0, yawRate: 0, laneIndex: 1 },
     vehicles: [], vehicleMeasurements: [], laneLines,
   };
 }
