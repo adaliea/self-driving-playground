@@ -80,7 +80,7 @@ const autopilotHoverDocs: Record<string, string> = {
     '',
     'Basic state of the controlled car.',
     '',
-    '`speed` is meters per second. `heading` is radians relative to the road/world frame. `laneIndex` is `0`, `1`, or `2` on the current 3-lane road.',
+    '`speed` is meters per second. `heading` is radians relative to the road/world frame. `yawRate` is the world turn rate in radians per second (positive is right), including road curvature. `laneIndex` is `0`, `1`, or `2` on the current 3-lane road.',
   ].join('\n'),
   VehicleMeasurement: [
     '**VehicleMeasurement**',
