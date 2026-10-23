@@ -23,4 +23,12 @@ describe('selectable telemetry signals', () => {
     expect(samples[1].values['pid:c:10:sum']).toBeUndefined();
     expect(samples[2].values['pid:c:10:output']).toBeUndefined();
   });
+
+  it('adds graph(...) series that share an axis per unit, or get their own without one', () => {
+    const signals = telemetrySignals([], { gap: 'm', offset: 'm', braking: undefined });
+    const graphs = signals.filter((signal) => signal.group === 'graph()');
+    expect(graphs.map((signal) => [signal.key, signal.label, signal.axis])).toEqual([
+      ['graph:gap', 'gap (m)', 'm'], ['graph:offset', 'offset (m)', 'm'], ['graph:braking', 'braking', 'braking'],
+    ]);
+  });
 });

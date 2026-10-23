@@ -52,4 +52,11 @@ describe('pre-race validation', () => {
     expect(module).toContain('function analyzeLaneRegression');
     expect(module).toContain('export default class Driver');
   });
+
+  it('treats graph(...) as a pass-through and lets drivers declare their own graph', () => {
+    const graphed = loadDriver(`export function autopilot(input: AutopilotInput): AutopilotOutput { return { motor: graph('motor', 0.25), steering: 0 }; }`);
+    expect(graphed({})).toEqual({ motor: 0.25, steering: 0 });
+    const shadowed = loadDriver(`const graph = 3;\nexport function autopilot(input: AutopilotInput): AutopilotOutput { return { motor: graph / 10, steering: 0 }; }`);
+    expect(shadowed({})).toEqual({ motor: 0.3, steering: 0 });
+  });
 });

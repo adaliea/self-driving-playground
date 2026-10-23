@@ -22,7 +22,12 @@ export interface SandboxRunResultMessage {
   output: unknown;
   durationMs: number;
   inspection?: RuntimeInspectionSnapshot;
+  /** Values recorded with graph(name, value, unit?) during this call. */
+  graphs?: GraphValues;
 }
+
+/** One autopilot call's graph(...) values, keyed by graph name. */
+export type GraphValues = Record<string, { value: number; unit?: string }>;
 
 export interface SandboxRunErrorMessage {
   type: 'run-error';
@@ -67,7 +72,8 @@ export function isSandboxFromFrameMessage(value: unknown): value is SandboxFromF
       return (
         typeof value.id === 'number' &&
         typeof value.durationMs === 'number' &&
-        (value.inspection === undefined || isRuntimeInspectionSnapshot(value.inspection))
+        (value.inspection === undefined || isRuntimeInspectionSnapshot(value.inspection)) &&
+        (value.graphs === undefined || isRecord(value.graphs))
       );
     case 'run-error':
       return typeof value.id === 'number' && typeof value.message === 'string';

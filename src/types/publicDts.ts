@@ -275,6 +275,23 @@ declare function analyzeLaneRegression(
 ): LaneAnalysis;
 
 /**
+ * Plots a value in the Telemetry graphs, one point per autopilot call.
+ *
+ * Call it with the same name every tick, for example
+ * graph('lane offset', lane.centerOffset, 'm'). Series with the same unit share
+ * a y-axis; without a unit each series gets its own scale. Booleans plot as 0/1,
+ * and non-finite values are skipped. Returns value unchanged, so it can wrap an
+ * expression inline. Graphing never affects the simulation.
+ */
+declare function graph<T extends number | boolean>(
+  /** Series name shown in the graph picker (up to 60 characters). */
+  name: string,
+  value: T,
+  /** Optional unit label, such as 'm' or 'rad'. Series with the same unit share an axis. */
+  unit?: string
+): T;
+
+/**
  * Main controller entry point called once per simulation control tick.
  *
  * Keep persistent controller state, such as PID objects, outside this function

@@ -142,6 +142,13 @@ const autopilotHoverDocs: Record<string, string> = {
     '',
     'Use it when sharp turns or noisy lane-line samples make a simple three-point lane estimate too jumpy.',
   ].join('\n'),
+  graph: [
+    '**graph(name, value, unit?)**',
+    '',
+    'Plots `value` in the Telemetry graphs, one point per autopilot call. New series are added to every graph tab the first time they appear.',
+    '',
+    'Series with the same `unit` share a y-axis; without one each series gets its own scale. Booleans plot as 0/1. Returns `value`, so it can wrap an expression: `const error = graph("lane offset", lane.centerOffset, "m");`',
+  ].join('\n'),
   clamp: [
     '**clamp(value, min, max)**',
     '',

@@ -1,6 +1,6 @@
 import type { ChartSample, ChartSeries } from './TelemetryChart';
 import type { NamedPidTelemetry } from './pidTelemetry';
-import type { TelemetryHistory } from './telemetryHistory';
+import { graphSignalKey, type TelemetryHistory } from './telemetryHistory';
 import { pidSeriesValue, type PidSeries } from './pidHistory';
 import { colorblindPalette as cb, pidTermColorblindStyle, type LinePattern } from './chartStyles';
 
@@ -10,7 +10,8 @@ const colors = ['#38bdf8', '#fbbf24', '#34d399', '#fb7185', '#c4b5fd', '#e2e8f0'
 // Colorblind-friendly mode: motor and steering each keep one hue, and the pipeline stage is the pattern.
 const stagePatterns: LinePattern[] = ['solid', 'dashed', 'dotted'];
 const pidTerms: [PidSeries, string][] = [['error', 'Error'], ['proportional', 'P'], ['integral', 'I'], ['derivative', 'D'], ['sum', 'P + I + D'], ['output', 'Output']];
-export function telemetrySignals(controllers: NamedPidTelemetry[]): TelemetrySignal[] {
+const graphColorblindColors = [cb.blue, cb.orange, cb.aqua, cb.yellow, cb.magenta, cb.green, cb.violet, cb.red];
+export function telemetrySignals(controllers: NamedPidTelemetry[], graphs: Record<string, string | undefined> = {}): TelemetrySignal[] {
   return [
     { key: 'speed', label: 'Speed', group: 'Vehicle', axis: 'mph', color: colors[0], colorblindColor: cb.blue, pattern: 'solid' },
     // Lead signals share the dash-dot pattern; lead speed reuses the speed hue so the two read as a pair.
@@ -29,6 +30,11 @@ export function telemetrySignals(controllers: NamedPidTelemetry[]): TelemetrySig
       axis: term === 'error' ? 'Error' : 'Command', color: colors[(index + controllerIndex) % colors.length],
       ...pidTermColorblindStyle[term],
     }))),
+    // graph(name, value, unit?) series share an axis per unit; without one, each gets its own scale.
+    ...Object.entries(graphs).map(([name, unit], index) => ({
+      key: graphSignalKey(name), label: unit ? `${name} (${unit})` : name, group: 'graph()', axis: unit ?? name,
+      color: colors[index % colors.length], colorblindColor: graphColorblindColors[index % graphColorblindColors.length], pattern: 'solid' as const,
+    })),
   ];
 }
 export function telemetrySamples(history: TelemetryHistory): ChartSample[] {

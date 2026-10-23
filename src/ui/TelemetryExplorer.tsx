@@ -4,7 +4,7 @@ import { Check, ExternalLink, Maximize2, Plus, Search, X } from 'lucide-react';
 import { PopoutWindow, openPopoutWindow } from './PopoutWindow';
 import { LineSwatch, TelemetryChart } from './TelemetryChart';
 import { setColorblindCharts, useColorblindCharts } from './chartStyles';
-import type { TelemetryHistory } from './telemetryHistory';
+import { graphSignalKey, type TelemetryHistory } from './telemetryHistory';
 import type { NamedPidTelemetry } from './pidTelemetry';
 import { defaultSignals, telemetrySamples, telemetrySignals } from './telemetrySignals';
 
@@ -37,7 +37,15 @@ export function TelemetryExplorer({ history, controllers, running }: {
   }, [open]);
   useEffect(() => { setFrozen(undefined); }, [history.version]);
   const data = frozen ?? history;
-  const signals = telemetrySignals(controllers);
+  const signals = telemetrySignals(controllers, data.graphs);
+  // A graph(...) series appears on every tab the first time it is recorded; deselecting it afterwards sticks.
+  const announcedGraphs = useRef(new Set<string>());
+  useEffect(() => {
+    const fresh = Object.keys(history.graphs ?? {}).map(graphSignalKey).filter((key) => !announcedGraphs.current.has(key));
+    if (!fresh.length) return;
+    for (const key of fresh) announcedGraphs.current.add(key);
+    setTabs((previous) => previous.map((tab) => ({ ...tab, selected: [...tab.selected, ...fresh.filter((key) => !tab.selected.includes(key))] })));
+  }, [history.graphs]);
   const active = tabs.find((tab) => tab.id === activeId) ?? tabs[0];
   const selected = signals.filter((signal) => active.selected.includes(signal.key));
   const visible = signals.filter((signal) => `${signal.group} ${signal.label}`.toLowerCase().includes(query.toLowerCase()));

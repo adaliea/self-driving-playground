@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import type { RenderTelemetry } from './rendering';
 import { CanvasRenderer } from './rendering';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation } from './simulation';
-import { CompilerClient, describeCompilerStatus, RuntimeInspectionStore, SandboxClient, type CompilerStatus } from './sandbox';
+import { CompilerClient, describeCompilerStatus, RuntimeInspectionStore, SandboxClient, type CompilerStatus, type GraphValues } from './sandbox';
 import { controllerExamples, defaultControllerExample, toolboxSnippets } from './toolbox';
 import type { PlaygroundSettings } from './types';
 import {
@@ -78,6 +78,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
   const codeLoadedRef = useRef(false);
   const compileSequenceRef = useRef(0);
   const runtimeErrorRef = useRef<string | undefined>(undefined);
+  const graphsRef = useRef<GraphValues>();
   const firstCompileDoneRef = useRef(false);
 
   if (!compilerRef.current) compilerRef.current = new CompilerClient();
@@ -145,6 +146,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
     let cancelled = false;
     const sequence = ++compileSequenceRef.current;
     codeLoadedRef.current = false;
+    graphsRef.current = undefined;
     inspectionStoreRef.current!.clearProgram();
     setCodeStatus('Compiling TypeScript');
 
@@ -247,6 +249,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
             try {
               const runResult = await sandboxRef.current.run(input, 28);
               output = runResult.output;
+              graphsRef.current = runResult.graphs;
               if (runResult.inspection) inspectionStoreRef.current!.updateSnapshot(runResult.inspection);
               if (runtimeErrorRef.current) {
                 runtimeErrorRef.current = undefined;
@@ -255,6 +258,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
             } catch (error) {
               const message = formatRunnerError(error);
               output = { motor: 0, steering: 0 };
+              graphsRef.current = undefined;
               if (runtimeErrorRef.current !== message) {
                 runtimeErrorRef.current = message;
                 setRuntimeError(message);
@@ -275,7 +279,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
       const snapshot = simulation.getSnapshot(settingsSnapshot);
       rendererRef.current?.render(snapshot);
       if (now - lastTelemetryUpdate > 110) {
-        setTelemetry(snapshot.telemetry);
+        setTelemetry({ ...snapshot.telemetry, graphs: graphsRef.current });
         lastTelemetryUpdate = now;
       }
 

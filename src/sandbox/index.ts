@@ -3,6 +3,7 @@ export type { CompilerStatus } from './CompilerClient';
 export { SandboxClient } from './SandboxClient';
 export { RuntimeInspectionStore } from './RuntimeInspectionStore';
 export type { CompileResult } from './compiler';
+export type { GraphValues } from './protocol';
 export type {
   InspectionManifest,
   RuntimeBindingMetadata,

@@ -1,11 +1,12 @@
 import type { AutopilotInput } from '../types';
 import type { RuntimeInspectionSnapshot } from './inspection';
-import { isSandboxFromFrameMessage, type SandboxFromFrameMessage, type SandboxToFrameMessage } from './protocol';
+import { isSandboxFromFrameMessage, type GraphValues, type SandboxFromFrameMessage, type SandboxToFrameMessage } from './protocol';
 
 export interface SandboxRunResult {
   output: unknown;
   durationMs: number;
   inspection?: RuntimeInspectionSnapshot;
+  graphs?: GraphValues;
 }
 
 interface PendingRun {
@@ -159,6 +160,7 @@ export class SandboxClient {
           output: message.output,
           durationMs: message.durationMs,
           inspection: message.inspection,
+          graphs: message.graphs,
         });
         break;
       }

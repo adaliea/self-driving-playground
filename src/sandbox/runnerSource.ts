@@ -18,6 +18,9 @@ function runnerHelpers(): string {
  */
 export function driverFactoryBody(js: string): string {
   return `'use strict';
+// graph(...) only feeds the presenter's telemetry charts; it sits outside the driver's scope, as in the browser sandbox.
+const graph = (name, value) => value;
+return (() => {
 const __playgroundTraceValue = (id, value) => value;
 const __playgroundTracePostfix = (id, readCurrent, expressionResult) => expressionResult;
 const __playgroundTraceToolboxCall = (id, name, fn, args) => Reflect.apply(fn, undefined, args);
@@ -37,7 +40,8 @@ const caches = undefined;
 const postMessage = undefined;
 ${runnerHelpers()}
 ${js}
-return module.exports.autopilot || exports.autopilot || (typeof autopilot === 'function' ? autopilot : undefined);`;
+return module.exports.autopilot || exports.autopilot || (typeof autopilot === 'function' ? autopilot : undefined);
+})();`;
 }
 
 /**

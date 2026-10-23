@@ -1,3 +1,4 @@
+import type { GraphValues } from '../sandbox/protocol';
 import type { AutopilotDebug, LaneLineDetections, PlaygroundSettings, VehicleMeasurement, VehicleTrack } from '../types';
 
 export interface RenderPoint {
@@ -85,6 +86,8 @@ export interface RenderTelemetry {
   invalidFields: string[];
   collisions: number;
   debug?: AutopilotDebug;
+  /** Latest graph(name, value) values from the browser sandbox; the simulation itself never sets this. */
+  graphs?: GraphValues;
 }
 
 export interface RenderSensors {

@@ -48,4 +48,13 @@ describe('shared telemetry recording', () => {
     expect(held.vehicle).toHaveLength(1);
     expect(held.pids.position).toHaveLength(1);
   });
+
+  it('records graph(...) values as signals and remembers each series and unit until reset', () => {
+    const first = recordTelemetry(initial, 1, { ...telemetry, graphs: { gap: { value: 12, unit: 'm' }, braking: { value: 1 } } }, []);
+    expect(first.vehicle[0].values).toMatchObject({ 'graph:gap': 12, 'graph:braking': 1 });
+    const second = recordTelemetry(first, 1, { ...telemetry, time: 2 }, []);
+    expect(second.vehicle[1].values['graph:gap']).toBeUndefined();
+    expect(second.graphs).toEqual({ gap: 'm', braking: undefined });
+    expect(recordTelemetry(second, 2, telemetry, []).graphs).toEqual({});
+  });
 });

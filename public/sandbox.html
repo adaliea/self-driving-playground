@@ -52,6 +52,23 @@
             const __inspectionBindings = new Map();
             const __inspectionCalls = new Map();
             let __lastInspectionSnapshotAt = 0;
+            // graph(name, value, unit?) records one value per autopilot call for the telemetry graphs.
+            // It lives outside the user-code scope so drivers may still declare their own "graph".
+            const __GRAPH_LIMIT = 48;
+            let __graphValues = {};
+            let __graphCount = 0;
+            const graph = (name, value, unit) => {
+              const numeric = typeof value === 'boolean' ? Number(value) : value;
+              if (typeof numeric !== 'number' || !Number.isFinite(numeric)) return value;
+              const key = String(name).slice(0, 60);
+              if (!key) return value;
+              if (!Object.prototype.hasOwnProperty.call(__graphValues, key)) {
+                if (__graphCount >= __GRAPH_LIMIT) return value;
+                __graphCount += 1;
+              }
+              __graphValues[key] = { value: numeric, unit: unit === undefined ? undefined : String(unit).slice(0, 24) };
+              return value;
+            };
             const __playgroundTraceValue = (id, value) => {
               __inspectionBindings.set(id, { value, observedAt: Date.now() });
               return value;
@@ -411,12 +428,15 @@
                 return;
               }
               const started = performance.now();
+              __graphValues = {};
+              __graphCount = 0;
               try {
                 const output = __autopilot(message.input);
                 __sandboxSend({
                   type: 'worker-result',
                   id: message.id,
                   output,
+                  graphs: __graphCount ? __graphValues : undefined,
                   durationMs: performance.now() - started,
                   inspection: message.inspect === false ? undefined : __inspectionSnapshot()
                 });
@@ -458,7 +478,8 @@
                 id: message.id,
                 output: message.output,
                 durationMs: Number(message.durationMs || 0),
-                inspection: message.inspection
+                inspection: message.inspection,
+                graphs: message.graphs
               });
               return;
             }
