@@ -89,14 +89,16 @@ export function PidPlayground() {
         }
         const measured = sim.position + (noiseOn ? gaussian() * NOISE : 0);
         const error = sim.setpoint - measured;
-        sim.integral += error * DT;
+        // Accumulate the I term itself, so changing ki doesn't rescale everything already built up.
+        // With ki at 0 there is no I, including whatever had built up before.
+        sim.integral = ki === 0 ? 0 : sim.integral + ki * error * DT;
         const rawDerivative = sim.previousError === undefined ? 0 : (error - sim.previousError) / DT;
         sim.derivative = sim.previousError === undefined
           ? rawDerivative
           : sim.derivative + (rawDerivative - sim.derivative) * (DT / (DERIVATIVE_SMOOTHING + DT));
         sim.previousError = error;
         const p = kp * error;
-        const i = ki * sim.integral;
+        const i = sim.integral;
         const d = kd * sim.derivative;
         const output = Math.max(-OUTPUT_LIMIT, Math.min(OUTPUT_LIMIT, p + i + d));
         sim.terms = { p, i, d, output };
@@ -139,7 +141,14 @@ export function PidPlayground() {
 
         <div className="grid grid-cols-2 gap-2">
           {PRESETS.map((preset) => (
-            <DeckButton key={preset.label} onClick={() => setGains(preset.gains)}>
+            <DeckButton
+              key={preset.label}
+              onClick={() => {
+                // A preset is a fresh controller: no built-up I, no derivative history.
+                Object.assign(state.current, { integral: 0, previousError: undefined, derivative: 0 });
+                setGains(preset.gains);
+              }}
+            >
               {preset.label}
             </DeckButton>
           ))}

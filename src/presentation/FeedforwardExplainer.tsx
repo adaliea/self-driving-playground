@@ -37,8 +37,8 @@ export function FeedforwardExplainer() {
           Feedforward does most of the work. Feedback cleans up whatever the prediction got wrong.
         </Idea>
         <div className="col-span-3 rounded-xl bg-[#1d1b2e] px-4 py-2 font-mono text-xl text-white">
-          steering = <span style={{ color: mint }}>steeringFeedforward(lane.curvature, input.ego.speed)</span> +{' '}
-          <span style={{ color: '#ff8fa0' }}>lanePid.update(laneError, input.dt)</span>
+          const steering = <span style={{ color: '#ff8fa0' }}>lanePid.update(lane.centerOffset, input.dt)</span> +{' '}
+          <span style={{ color: mint }}>steeringFeedforward(lane.curvature, input.ego.speed)</span>;
         </div>
       </div>
     </div>
@@ -72,6 +72,15 @@ const FEEDFORWARD_ACCURACY = 0.9;
 const LOOP_PAUSE = 1.2;
 
 const curvatureAt = (s: number) => (s >= CURVE_START && s < CURVE_END ? CURVATURE : 0);
+/**
+ * What the lane-line fit reports: the average bend over the next 12 m, so it
+ * starts seeing the curve shortly before the car reaches it.
+ */
+const curvatureAhead = (s: number) => {
+  let sum = 0;
+  for (let ahead = 0; ahead < 12; ahead += 1) sum += curvatureAt(s + ahead);
+  return sum / 12;
+};
 
 interface RoadPoint {
   x: number;
@@ -118,7 +127,7 @@ function simulate(feedforward: boolean): RunSample[] {
     const offsetRate = (offset - previousOffset) / DT;
     previousOffset = offset;
     let steering = 0.5 * offset + 0.1 * offsetRate;
-    if (feedforward) steering -= (SPEED * curvatureAt(s) * FEEDFORWARD_ACCURACY) / 0.68;
+    if (feedforward) steering -= (SPEED * curvatureAhead(s) * FEEDFORWARD_ACCURACY) / 0.68;
     steering = Math.max(-1, Math.min(1, steering));
     actualSteering += (steering - actualSteering) * Math.min(1, DT / 0.14);
     const turnRate = -0.68 * actualSteering;

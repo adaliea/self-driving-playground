@@ -144,6 +144,11 @@ describe('PID snippet naming', () => {
     expect(insertion.usage).toContain(`${third}.update(`);
   });
 
+  it('picks the controller from the line the cursor is on', () => {
+    expect(snippetInsertion(pid, '', '  const steering = lane.centerOffset * 0.3;').usage).toBe('lanePid.update(analyzeLane(input.laneLines).centerOffset, input.dt)');
+    expect(snippetInsertion(pid, 'const lane = 1;', '  let motor = ').usage).toBe('distancePid.update(closestVehicleDistance - 30, input.dt)');
+  });
+
   it('inserts just the update call, using targetDistance when the code has one', () => {
     expect(snippetInsertion(pid, '').usage).toBe('distancePid.update(closestVehicleDistance - 30, input.dt)');
     expect(snippetInsertion(pid, 'const targetDistance = 20;').usage).toBe('distancePid.update(closestVehicleDistance - targetDistance, input.dt)');

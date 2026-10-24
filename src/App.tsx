@@ -2,7 +2,16 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { RenderTelemetry } from './rendering';
 import { CanvasRenderer } from './rendering';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation } from './simulation';
-import { CompilerClient, describeCompilerStatus, RuntimeInspectionStore, SandboxClient, type CompileWarning, type CompilerStatus, type GraphValues } from './sandbox';
+import {
+  CompilerClient,
+  describeCompilerStatus,
+  RuntimeInspectionStore,
+  SandboxClient,
+  type CompileResult,
+  type CompileWarning,
+  type CompilerStatus,
+  type GraphValues,
+} from './sandbox';
 import { controllerExamples, defaultControllerExample, toolboxSnippets, visibleToolboxSource, type ControllerExample } from './toolbox';
 import type { PlaygroundSettings } from './types';
 import {
@@ -115,6 +124,10 @@ function App({
   const compileSequenceRef = useRef(0);
   const runtimeErrorRef = useRef<string | undefined>(undefined);
   const graphsRef = useRef<GraphValues>();
+  /** The last code loaded into the runner, kept so Reset can reload it fresh. */
+  const loadedProgramRef = useRef<{ js: string; inspection: CompileResult['inspection'] }>();
+  /** Loads in flight; overlapping compiles can have more than one. */
+  const loadingCodeRef = useRef(0);
   const activeRef = useRef(active);
   activeRef.current = active;
   const firstCompileDoneRef = useRef(false);
@@ -211,7 +224,13 @@ function App({
 
       setCompileErrors([]);
       try {
-        const version = await sandboxRef.current?.loadCode(result.js);
+        // Set before loading, so a Reset during the load reloads this code rather than the old one.
+        const program = { js: result.js, inspection: result.inspection };
+        loadedProgramRef.current = program;
+        loadingCodeRef.current += 1;
+        const version = await sandboxRef.current?.loadCode(result.js).finally(() => {
+          loadingCodeRef.current -= 1;
+        });
         if (cancelled || sequence !== compileSequenceRef.current) return;
         if (version !== undefined) inspectionStoreRef.current!.setProgram(version, result.inspection);
         codeLoadedRef.current = true;
@@ -338,6 +357,17 @@ function App({
 
   const resetSimulation = useCallback(() => {
     simulationRef.current!.reset(settingsRef.current);
+    // Reload the driver too, so state it keeps between ticks (PID integrals, a remembered lane) starts fresh.
+    // While a load is already in flight it gives a fresh driver anyway; a second load would only race it.
+    const program = loadedProgramRef.current;
+    if (program && sandboxRef.current && loadingCodeRef.current === 0) {
+      void sandboxRef.current
+        .loadCode(program.js)
+        .then((version) => {
+          if (loadedProgramRef.current === program) inspectionStoreRef.current!.setProgram(version, program.inspection);
+        })
+        .catch(() => undefined);
+    }
     const snapshot = simulationRef.current!.getSnapshot(settingsRef.current);
     rendererRef.current?.render(snapshot);
     setTelemetry(snapshot.telemetry);
@@ -384,11 +414,14 @@ function App({
     (example: ControllerExample) => {
       setSelectedExampleId(example.id);
       updateCode(example.code);
-      if (example.recommendedSettings) {
+      // "Start over" and "Catch up" only replace code. Re-applying the starter's settings would,
+      // for example, turn "Steer for me" back on after the talk has turned it off.
+      const switchingExamples = examples.length > 1 && example.id !== catchUp?.id;
+      if (switchingExamples && example.recommendedSettings) {
         updateSettings({ ...settingsRef.current, ...example.recommendedSettings });
       }
     },
-    [updateCode, updateSettings],
+    [catchUp, examples, updateCode, updateSettings],
   );
 
   const loadExample = useCallback((id: string) => {
@@ -443,7 +476,9 @@ function App({
               fontSize={editorFontSize}
               codeStatus={displayedCodeStatus}
               inspectionStore={inspectionStoreRef.current}
-              renderToolbox={(insertAtCursor) => <ToolboxPanel snippets={unlockedSnippets} source={code} onInsert={insertAtCursor} />}
+              renderToolbox={(insertAtCursor, getCursorLine) => (
+                <ToolboxPanel snippets={unlockedSnippets} source={code} getCursorLine={getCursorLine} onInsert={insertAtCursor} />
+              )}
               onCodeChange={updateCode}
               onLoadExample={loadExample}
               catchUp={catchUp && catchUp.code !== code ? { title: catchUp.title, onClick: () => loadExample(catchUp.id) } : undefined}

@@ -90,6 +90,15 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
 }`);
     expect(outside.warnings).toEqual([]);
   });
+
+  it('warns about a + term that landed after the semicolon and does nothing', () => {
+    const result = compileUserCode(`
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  const steering = clamp(1, -1, 1); + clamp(2, -1, 1);
+  return { motor: 0, steering };
+}`);
+    expect(result.warnings.map((warning) => warning.message)).toEqual([expect.stringContaining('This line does nothing')]);
+  });
 });
 
 function execute(js: string): ExecutedController {

@@ -1,7 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import App from '../App';
-import { useHostRoom, type HostRoom } from '../multiplayer/hostRoom';
-import { settingsFromPush, type SettingsPush } from '../multiplayer/protocol';
+import { writeStoredJson } from '../multiplayer/connection';
+import { HOST_SESSION_KEY, useHostRoom, type HostRoom } from '../multiplayer/hostRoom';
+import { DEFAULT_PRESENTATION, settingsFromPush, type SettingsPush } from '../multiplayer/protocol';
 import {
   brakingStarterExample,
   checkpointExamples,
@@ -69,7 +70,7 @@ const SLIDES: Slide[] = [
   { id: 'mission', render: () => <MissionSlide /> },
   {
     id: 'bang-bang',
-    heading: { title: 'Bang-bang control', hint: 'Full power, or nothing at all. What could go wrong?' },
+    heading: { title: 'Bang-bang control', hint: 'Go, or coast: one of two fixed commands. What could go wrong?' },
     editor: BANG_BANG_EDITOR,
   },
   {
@@ -119,7 +120,7 @@ const SLIDES: Slide[] = [
   },
   {
     id: 'add-feedforward',
-    heading: { title: 'Adding steering feedforward', hint: 'Type + after the PID call, then Toolbox → Steering Feedforward → Insert usage.' },
+    heading: { title: 'Adding steering feedforward', hint: 'Click just before the ; after the PID call, type +, then Toolbox → Steering Feedforward → Insert usage.' },
     editor: FEEDFORWARD_EDITOR,
   },
   {
@@ -127,6 +128,7 @@ const SLIDES: Slide[] = [
     heading: { title: 'Before we start racing', hint: 'Fastest Lane Selection is now in your Toolbox.' },
     render: () => <BeforeRacing />,
     unlocksHelpers: ['fastest-lane'],
+    checkpointId: raceReadyExample.id,
   },
   {
     id: 'race',
@@ -168,12 +170,55 @@ function RaceScreen() {
 /** Area below the slide heading where the editor and full-width demos live. */
 const STAGE = 'absolute inset-x-6 bottom-6 top-[8.5rem]';
 
+const FRESH_START_FLAG = 'self-driving-playground:deck-fresh-start';
+const DECK_STORAGE_PREFIX = 'self-driving-playground:presentation:';
+
+/**
+ * New room, the deck's editors back to their starting code, and back to slide 1. Reloads first,
+ * so nothing from the old run is still in memory to copy into the new room.
+ */
+function startFresh(): void {
+  window.sessionStorage.setItem(FRESH_START_FLAG, '1');
+  window.location.hash = '#1';
+  window.location.reload();
+}
+
+/**
+ * After a fresh-start reload, forgets the deck's saved editor code and room before anything reads
+ * them. With no saved room, the deck creates a new one as on a first visit.
+ */
+function applyFreshStart(): void {
+  if (!window.sessionStorage.getItem(FRESH_START_FLAG)) return;
+  window.sessionStorage.removeItem(FRESH_START_FLAG);
+  for (const key of Object.keys(window.localStorage)) {
+    if (key.startsWith(DECK_STORAGE_PREFIX)) window.localStorage.removeItem(key);
+  }
+  writeStoredJson(HOST_SESSION_KEY, undefined);
+}
+
+/** True when the room still has progress from an earlier run through the slides, like a rehearsal. */
+function roomHasProgress(room: HostRoom): boolean {
+  const { presentation } = room;
+  return (
+    room.ready &&
+    (presentation.submissionsOpen ||
+      presentation.checkpointId !== undefined ||
+      presentation.settingsPush !== undefined ||
+      presentation.lockedHelpers.join() !== DEFAULT_PRESENTATION.lockedHelpers.join())
+  );
+}
+
 export function Presentation() {
+  useState(applyFreshStart);
   const room = useHostRoom();
   const [index, setIndex] = useState(readSlideFromHash);
   const slide = SLIDES[index];
   const settingsPushState = room.presentation.settingsPush;
-  const settingsPush = useMemo(() => settingsFromPush(settingsPushState), [settingsPushState]);
+  // Scoped to the room like players' pushes, so a rehearsal doesn't stop it applying in the talk.
+  const settingsPush = useMemo(() => {
+    const push = settingsFromPush(settingsPushState);
+    return push && room.roomCode ? { ...push, id: `${room.roomCode}:${push.id}` } : undefined;
+  }, [settingsPushState, room.roomCode]);
   // The hidden editor keeps the last editor slide's code until another editor slide is shown.
   const [editorSetup, setEditorSetup] = useState<EditorSetup>(() => slide.editor ?? BANG_BANG_EDITOR);
   useEffect(() => {
@@ -195,20 +240,33 @@ export function Presentation() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  // Applied once each time a slide is reached, after the room's saved state has loaded,
-  // so manual changes in the presenter panel stick until the next slide.
-  const appliedSlideRef = useRef<string>();
+  // The furthest slide reached so far. Progress (checkpoint, unlocks, settings push) never goes
+  // backward when you revisit an earlier slide, and jumping ahead includes everything before it.
+  // Saved per room, so refreshing the deck on an earlier slide doesn't move progress back either.
+  const furthestRef = useRef(index);
+  furthestRef.current = Math.max(furthestRef.current, index);
+
+  // Applied once per slide visit and room, after the room's saved state has loaded, so manual
+  // changes in the presenter panel stick until the next slide, and a new room catches up at once.
+  const appliedKeyRef = useRef<string>();
   useEffect(() => {
-    if (!room.ready || appliedSlideRef.current === slide.id) return;
-    appliedSlideRef.current = slide.id;
+    if (!room.ready || !room.roomCode) return;
+    const key = `${room.roomCode}:${index}`;
+    if (appliedKeyRef.current === key) return;
+    appliedKeyRef.current = key;
+    const furthestKey = `${DECK_STORAGE_PREFIX}furthest-slide:${room.roomCode}`;
+    furthestRef.current = Math.max(furthestRef.current, Number(window.localStorage.getItem(furthestKey)) || 0);
+    window.localStorage.setItem(furthestKey, String(furthestRef.current));
     const { presentation } = room;
     const next = { ...presentation };
+    for (const reached of SLIDES.slice(0, furthestRef.current + 1)) {
+      if (reached.checkpointId) next.checkpointId = reached.checkpointId;
+      if (reached.settingsPush) next.settingsPush = reached.settingsPush;
+      if (reached.unlocksHelpers) next.lockedHelpers = next.lockedHelpers.filter((id) => !reached.unlocksHelpers!.includes(id));
+    }
+    // Submissions follow the slide you're on: race slides open them, the lane change slide closes them.
     if (slide.opensSubmissions) next.submissionsOpen = true;
     if (slide.closesSubmissions) next.submissionsOpen = false;
-    if (slide.unlocksHelpers) next.lockedHelpers = presentation.lockedHelpers.filter((id) => !slide.unlocksHelpers!.includes(id));
-    // Reaching a slide moves the checkpoint forward; going back leaves it.
-    if (slide.checkpointId) next.checkpointId = slide.checkpointId;
-    if (slide.settingsPush) next.settingsPush = slide.settingsPush;
     if (
       next.submissionsOpen !== presentation.submissionsOpen ||
       next.checkpointId !== presentation.checkpointId ||
@@ -217,7 +275,7 @@ export function Presentation() {
     ) {
       room.updatePresentation(next);
     }
-  }, [slide, room]);
+  }, [index, slide, room]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -394,20 +452,14 @@ function PresenterPanel({ room }: { room: HostRoom }) {
         })}
       </div>
       <div className="mt-3 grid gap-2 border-t-[3px] border-[#1d1b2e] pt-3">
-        <a
-          href="/host"
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-xl border-[3px] border-[#1d1b2e] bg-white px-3 py-2 text-center shadow-[3px_3px_0_#1d1b2e]"
-        >
-          Open race screen ↗
-        </a>
         <DeckButton
           onClick={() => {
-            if (window.confirm('Close this room and open a new one with a new code? Everyone will need to rejoin.')) void room.newRoom();
+            if (window.confirm('Start fresh? This opens a new room with a new code (everyone will need to rejoin) and resets the code on the deck\'s editor slides.')) {
+              startFresh();
+            }
           }}
         >
-          New room
+          Start fresh (new room)
         </DeckButton>
         {room.error ? <div className="text-sm" style={{ color: cherry }}>{room.error}</div> : null}
       </div>
@@ -451,6 +503,12 @@ function TitleSlide({ room }: { room: HostRoom }) {
           </div>
         </div>
       </div>
+      {roomHasProgress(room) ? (
+        <div className={`absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-4 px-5 py-3 ${panel}`} style={{ background: sun }}>
+          <span className="text-lg font-black">This room still has progress from a run-through (catch-up, unlocks, racing).</span>
+          <DeckButton onClick={startFresh}>Start fresh for the talk</DeckButton>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -488,6 +546,22 @@ function ThanksSlide() {
               </a>
             ))}
           </div>
+          <a
+            href="https://betterlyrics.org"
+            target="_blank"
+            rel="noreferrer"
+            className="mt-6 flex items-center gap-4 rounded-2xl border-[3px] border-dashed border-[#1d1b2e] px-6 py-3 text-left"
+          >
+            <img src="/better-lyrics-logo.png" alt="Better Lyrics logo" className="h-16 w-16 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-black opacity-60">Also from me: a project I maintain</span>
+              <span className="block text-2xl font-black">Better Lyrics</span>
+              <span className="block text-lg font-bold opacity-75">Free, open-source time-synced lyrics for YouTube Music, used by about 140k people every week.</span>
+            </span>
+            <span className="text-2xl font-black" style={{ color: sky }}>
+              betterlyrics.org
+            </span>
+          </a>
         </div>
       </div>
     </>

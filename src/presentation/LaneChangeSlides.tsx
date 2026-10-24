@@ -7,7 +7,7 @@ import { bubblegum, cherry, ink, mint, panel, sky, sun } from './theme';
 
 const RACE_STEPS: { title: string; body: ReactNode }[] = [
   { title: 'Turn off "Steer for me"', body: 'Races run without assists, so your steering has to work on its own.' },
-  { title: 'Press Submit to race', body: 'The server test-drives your car for 30 seconds first. Cars that block traffic or keep crashing are sent back.' },
+  { title: 'Press Submit to race', body: 'It appears once racing opens. The server test-drives your car for 30 seconds first; cars that block traffic or keep crashing are sent back.' },
   { title: 'Keep improving', body: 'Your latest submitted version races from the next round. Submit again whenever you like.' },
   { title: 'Fallen behind?', body: '"Catch up to presenter" gives you a car that is ready to race.' },
 ];
@@ -34,7 +34,7 @@ export function BeforeRacing() {
           ))}
         </ol>
         <div className="mt-auto rounded-2xl border-[3px] border-[#1d1b2e] px-4 py-3 text-lg font-bold" style={{ background: sun }}>
-          Score = meters driven, minus points for every crash you cause or are in.
+          Score = meters driven, minus points for every crash you cause or are in, and for every time you hit the road edge.
         </div>
       </div>
 

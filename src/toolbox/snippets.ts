@@ -11,7 +11,7 @@ export interface ToolboxSnippet {
   /** The call inserted at the cursor, e.g. after `const steering = `. */
   usage: string;
   /** Builds setup and usage from the code being edited, for snippets that adapt to it. */
-  build?: (source: string) => SnippetInsertion;
+  build?: (source: string, cursorLine: string) => SnippetInsertion;
 }
 
 export interface SnippetInsertion {
@@ -19,9 +19,9 @@ export interface SnippetInsertion {
   usage: string;
 }
 
-/** What inserting a snippet adds to `source`. */
-export function snippetInsertion(snippet: ToolboxSnippet, source: string): SnippetInsertion {
-  return snippet.build ? snippet.build(source) : { setup: snippet.setup, usage: snippet.usage };
+/** What inserting a snippet adds to `source`, given the line the cursor is on. */
+export function snippetInsertion(snippet: ToolboxSnippet, source: string, cursorLine = ''): SnippetInsertion {
+  return snippet.build ? snippet.build(source, cursorLine) : { setup: snippet.setup, usage: snippet.usage };
 }
 
 function isDeclared(source: string, name: string): boolean {
@@ -36,18 +36,21 @@ function laneField(source: string, field: string): string {
 const PID_NAME_WORDS = ['rocket', 'turbo', 'comet', 'pickle', 'waffle', 'otter', 'mango', 'pixel', 'zippy', 'noodle', 'falcon', 'banjo'];
 
 /**
- * Names a new PID: distancePid first (following the car ahead), then lanePid,
- * then a random word so each controller gets its own telemetry card.
+ * Names a new PID from the line it is inserted on: lanePid on a steering line, distancePid
+ * on a motor line. Otherwise distancePid, then lanePid, then a random word, so each
+ * controller gets its own telemetry card.
  */
-function newPidName(source: string): string {
+function newPidName(source: string, cursorLine: string): string {
+  const preferred = /steering|centerOffset/.test(cursorLine) ? 'lanePid' : /motor|Distance/.test(cursorLine) ? 'distancePid' : undefined;
+  if (preferred && !isDeclared(source, preferred)) return preferred;
   for (const name of ['distancePid', 'lanePid']) if (!isDeclared(source, name)) return name;
   const free = PID_NAME_WORDS.map((word) => `${word}Pid`).filter((name) => !isDeclared(source, name));
   if (free.length > 0) return free[Math.floor(Math.random() * free.length)];
   for (let index = 2; ; index += 1) if (!isDeclared(source, `pid${index}`)) return `pid${index}`;
 }
 
-function buildPidInsertion(source: string): SnippetInsertion {
-  const name = newPidName(source);
+function buildPidInsertion(source: string, cursorLine: string): SnippetInsertion {
+  const name = newPidName(source, cursorLine);
   if (name === 'distancePid') {
     const target = isDeclared(source, 'targetDistance') ? 'targetDistance' : '30';
     return {
@@ -60,6 +63,9 @@ const distancePid = createPidController({
   outputMin: -1,
   // Also a speed limit: 0.75 motor balances drag at about 38 m/s.
   outputMax: 0.75,
+  // Stops I from building up while the lane ahead is clear.
+  integralMin: -20,
+  integralMax: 20,
 });`],
       usage: `distancePid.update(closestVehicleDistance - ${target}, input.dt)`,
     };

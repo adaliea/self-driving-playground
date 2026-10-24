@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { CARTOON_FONT, CartoonRenderer, raceCameraTarget, type CartoonPlayerLabel } from '../rendering';
 import { RoomConnection, createRoom, readStoredJson, roomSocketUrl, writeStoredJson, type ConnectionStatus } from './connection';
-import { HOST_SESSION_KEY } from './hostRoom';
+import { HOST_SESSION_KEY, saveHostSession, useHostSessionChanges } from './hostRoom';
 import { toolboxSnippets } from '../toolbox/snippets';
 import {
   DEFAULT_PRESENTATION,
@@ -68,13 +68,16 @@ export function HostView() {
   const startNewRoom = useCallback(async () => {
     setError(undefined);
     try {
-      const created = await createRoom();
-      writeStoredJson(HOST_SESSION_KEY, created);
-      setSession(created);
+      saveHostSession(await createRoom());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }, []);
+
+  const switchRoom = useCallback((next: CreateRoomResponse) => {
+    setSession((current) => (current?.roomCode === next.roomCode ? current : next));
+  }, []);
+  useHostSessionChanges(switchRoom);
 
   const autoCreateTried = useRef(false);
   useEffect(() => {
@@ -131,6 +134,10 @@ export function HostView() {
     connectionRef.current = roomConnection;
 
     return () => {
+      // Leaving the race view (e.g. the deck's race slide) ends the race for everyone, not just here.
+      // A round in progress is scored first so it still counts on the leaderboard.
+      if (engine.phase === 'racing') engine.endRound();
+      if (engine.phase !== 'lobby') engine.enterLobby();
       roomConnection.close();
       engine.dispose();
       connectionRef.current = undefined;

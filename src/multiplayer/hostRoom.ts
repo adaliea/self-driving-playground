@@ -11,6 +11,22 @@ import {
 
 /** Shared by /host and /presentation, so both control the same room. */
 export const HOST_SESSION_KEY = 'self-driving-playground:host-session:v1';
+const HOST_SESSION_EVENT = 'self-driving-playground:host-session';
+
+/** Saves a new room and tells every host view on this page (the deck and its race slide) to switch to it. */
+export function saveHostSession(session: CreateRoomResponse): void {
+  writeStoredJson(HOST_SESSION_KEY, session);
+  window.dispatchEvent(new CustomEvent<CreateRoomResponse>(HOST_SESSION_EVENT, { detail: session }));
+}
+
+/** Calls `onChange` when another host view on this page switches rooms. */
+export function useHostSessionChanges(onChange: (session: CreateRoomResponse) => void): void {
+  useEffect(() => {
+    const listener = (event: Event) => onChange((event as CustomEvent<CreateRoomResponse>).detail);
+    window.addEventListener(HOST_SESSION_EVENT, listener);
+    return () => window.removeEventListener(HOST_SESSION_EVENT, listener);
+  }, [onChange]);
+}
 
 export interface HostRoom {
   roomCode?: string;
@@ -41,15 +57,21 @@ export function useHostRoom(): HostRoom {
   const newRoom = useCallback(async () => {
     setError(undefined);
     try {
-      const created = await createRoom();
-      writeStoredJson(HOST_SESSION_KEY, created);
-      setPlayers(new Map());
-      setReady(false);
-      setSession(created);
+      saveHostSession(await createRoom());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }, []);
+
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const switchRoom = useCallback((next: CreateRoomResponse) => {
+    if (sessionRef.current?.roomCode === next.roomCode) return;
+    setPlayers(new Map());
+    setReady(false);
+    setSession(next);
+  }, []);
+  useHostSessionChanges(switchRoom);
 
   const autoCreateTried = useRef(false);
   useEffect(() => {

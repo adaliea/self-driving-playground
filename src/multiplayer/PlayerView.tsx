@@ -74,7 +74,7 @@ export function PlayerView({ initialRoomCode }: { initialRoomCode?: string }) {
     <PlayerRoom
       session={session}
       onLeave={() => {
-        writeStoredJson(playerSessionKey(session.roomCode), undefined);
+        // Keep this browser's credentials: rejoining the same room reuses the same player slot.
         window.location.href = '/';
       }}
     />
@@ -243,7 +243,11 @@ function PlayerRoom({ session, onLeave }: { session: PlayerSession; onLeave: () 
     }
   }, []);
 
-  const settingsPush = useMemo(() => settingsFromPush(state.presentation.settingsPush), [state.presentation.settingsPush]);
+  // Scoped to the room, so a push applied during a rehearsal still applies in the real talk.
+  const settingsPush = useMemo(() => {
+    const push = settingsFromPush(state.presentation.settingsPush);
+    return push ? { ...push, id: `${session.roomCode}:${push.id}` } : undefined;
+  }, [state.presentation.settingsPush, session.roomCode]);
 
   const renderTopBar = useCallback(
     (context: AppTopBarContext) => <RaceBar session={session} state={state} context={context} onSubmit={submit} onLeave={onLeave} />,
@@ -288,7 +292,11 @@ function RaceBar({
   const unchanged = state.submittedSource !== undefined && state.submittedSource === context.code;
   const validating = state.validation?.phase === 'validating';
   // Test drives are seeded from the code, so resubmitting rejected code would only fail again.
-  const rejectedUnchanged = state.validation?.phase === 'rejected' && state.validation.source === context.code;
+  // Server hiccups (the test drive couldn't run or ran out of time) are worth retrying with the same code.
+  const rejectedUnchanged =
+    state.validation?.phase === 'rejected' &&
+    state.validation.source === context.code &&
+    !state.validation.report.issues.some((issue) => issue.check === 'unavailable' || issue.check === 'timeout');
   const submissionsOpen = state.presentation.submissionsOpen;
   const status = submissionsOpen ? describeStatus(state, session.playerId) : undefined;
   const secondsLeft = state.round.endsAt ? Math.max(0, Math.ceil((state.round.endsAt - Date.now()) / 1000)) : undefined;

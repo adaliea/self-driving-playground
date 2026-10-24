@@ -307,7 +307,7 @@ interface EditorPanelProps {
    * Renders the toolbox menu. `insertAtCursor` adds code at the Autopilot.ts cursor,
    * and puts any `setup` declarations not already in the file above autopilot(input).
    */
-  renderToolbox: (insertAtCursor: (code: string, setup?: string[]) => void) => ReactNode;
+  renderToolbox: (insertAtCursor: (code: string, setup?: string[]) => void, getCursorLine: () => string) => ReactNode;
   onCodeChange: (code: string) => void;
   onLoadExample: (id: string) => void;
   /** Offers to replace the code with the presenter's latest checkpoint. */
@@ -413,6 +413,24 @@ export function EditorPanel({
     ensureToolboxModel(monacoEditor, toolboxSource);
   }, [toolboxSource]);
 
+  // TypeScript's red underlines (e.g. a misspelled name) don't stop the code from running, so count
+  // them for the status bar; otherwise "Code loaded" looks like everything is fine.
+  const [typeErrorCount, setTypeErrorCount] = useState(0);
+  useEffect(() => {
+    const uri = monacoEditor.Uri.parse(autopilotModelUri);
+    const count = () =>
+      setTypeErrorCount(
+        monacoEditor.editor
+          .getModelMarkers({ resource: uri })
+          .filter((marker) => marker.severity === monacoEditor.MarkerSeverity.Error).length,
+      );
+    count();
+    const subscription = monacoEditor.editor.onDidChangeMarkers((uris) => {
+      if (uris.some((changed) => changed.toString() === uri.toString())) count();
+    });
+    return () => subscription.dispose();
+  }, []);
+
   useEffect(() => {
     const model = monacoEditor.editor.getModel(monacoEditor.Uri.parse(autopilotModelUri));
     if (!model) return;
@@ -436,6 +454,13 @@ export function EditorPanel({
         }),
     );
   }, [compileWarnings]);
+
+  const getCursorLine = useCallback(() => {
+    const currentEditor = editorRef.current;
+    const model = currentEditor?.getModel();
+    const selection = currentEditor?.getSelection();
+    return model && selection ? model.getLineContent(selection.startLineNumber) : '';
+  }, []);
 
   const insertAtCursor = useCallback((code: string, setup: string[] = []) => {
     const currentEditor = editorRef.current;
@@ -510,7 +535,7 @@ export function EditorPanel({
             </span>
           ) : (
             <>
-              {renderToolbox(insertAtCursor)}
+              {renderToolbox(insertAtCursor, getCursorLine)}
               {catchUp ? (
                 <button
                   type="button"
@@ -610,6 +635,11 @@ export function EditorPanel({
             ) : (
               codeStatus
             )}
+            {compileErrors.length === 0 && typeErrorCount > 0 ? (
+              <span className="text-destructive">
+                {typeErrorCount} error{typeErrorCount === 1 ? '' : 's'}: hover the red underline
+              </span>
+            ) : null}
             {compileWarnings.length > 0 ? (
               <span className="text-warning">
                 {compileWarnings.length} warning{compileWarnings.length === 1 ? '' : 's'}: hover the yellow underline

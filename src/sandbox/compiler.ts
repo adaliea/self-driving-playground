@@ -128,6 +128,18 @@ function transpileInstrumentedUserCode(source: string): InstrumentedTranspileOut
     } else if (ts.isCallExpression(node)) {
       const directCall = directToolboxCall(node, checker);
       if (directCall) registerToolboxCall(directCall);
+    } else if (
+      ts.isExpressionStatement(node) &&
+      ts.isPrefixUnaryExpression(node.expression) &&
+      (node.expression.operator === ts.SyntaxKind.PlusToken || node.expression.operator === ts.SyntaxKind.MinusToken)
+    ) {
+      // e.g. `const steering = lanePid.update(...); + steeringFeedforward(...)`: the `+` landed after the `;`.
+      const start = node.getStart(sourceFile);
+      warnings.push({
+        message: 'This line does nothing: its result is not used. If you meant to add it to the line above, move it before that line\'s ;.',
+        start,
+        length: node.getEnd() - start,
+      });
     }
     ts.forEachChild(node, collect);
   };

@@ -8,12 +8,14 @@ interface ToolboxPanelProps {
   snippets: ToolboxSnippet[];
   /** The code being edited, so snippets can adapt to it (for example, picking an unused PID name). */
   source: string;
+  /** The text of the line the editor cursor is on. */
+  getCursorLine?: () => string;
   onInsert: (code: string, setup?: string[]) => void;
 }
 
 const POPOVER_WIDTH = 720;
 
-export function ToolboxPanel({ snippets, source, onInsert }: ToolboxPanelProps) {
+export function ToolboxPanel({ snippets, source, getCursorLine, onInsert }: ToolboxPanelProps) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLDivElement>(null);
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties>();
@@ -92,7 +94,7 @@ export function ToolboxPanel({ snippets, source, onInsert }: ToolboxPanelProps) 
                     type="button"
                     size="sm"
                     onClick={() => {
-                      const insertion = snippetInsertion(selected, source);
+                      const insertion = snippetInsertion(selected, source, getCursorLine?.() ?? '');
                       onInsert(insertion.usage, insertion.setup);
                       setOpen(false);
                     }}

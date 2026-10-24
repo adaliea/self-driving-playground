@@ -170,7 +170,7 @@ export function judgeValidation(metrics: ValidationMetrics): ValidationIssue[] {
   if (metrics.atFaultCollisions > rules.maxAtFaultCollisions) {
     issues.push({
       check: 'collisions',
-      message: `The car caused ${metrics.atFaultCollisions} crashes in ${Math.round(metrics.simulatedSeconds)} s (up to ${rules.maxAtFaultCollisions} are allowed). Brake for the car ahead; the Adaptive cruise example shows one way.`,
+      message: `The car caused ${metrics.atFaultCollisions} crashes in ${Math.round(metrics.simulatedSeconds)} s (up to ${rules.maxAtFaultCollisions} are allowed). Brake when the car ahead gets close, or use "Catch up to presenter" for a car that already does.`,
     });
   }
   return issues;

@@ -13,7 +13,7 @@ export function CheatSheet({ variant = 'distance' }: { variant?: CheatSheetVaria
   const script = variant === 'steering' ? STEERING_SCRIPT : DISTANCE_SCRIPT;
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,0.85fr)_minmax(0,1.5fr)] gap-5">
-      <TuningRecipe question={QUESTIONS[variant]} />
+      <TuningRecipe variant={variant} question={QUESTIONS[variant]} />
       <div className="grid min-h-0 grid-rows-[minmax(0,1.25fr)_minmax(0,1fr)] gap-5">
         <Card title="Adding the PID">
           <FitBox width={ADD_WIDTH} height={ADD_HEIGHT}>
@@ -52,21 +52,35 @@ const SYMPTOMS: { see: string; try: ReactNode }[] = [
   { see: 'Big slow swings after a long wait', try: <>less <Term color={sun}>I</Term></> },
 ];
 
-function TuningRecipe({ question }: { question: string }) {
+function TuningRecipe({ variant, question }: { variant: CheatSheetVariant; question: string }) {
   return (
     <div className={`flex min-h-0 flex-col gap-4 overflow-auto p-5 ${panel}`}>
       <h2 className="text-3xl font-black">Tune in this order</h2>
-      <ol className="grid gap-3">
-        <RecipeStep color={sky} label="P" title="P first.">
-          Start with ki and kd at 0. Raise kp until the car reacts quickly. A little bouncing is fine.
-        </RecipeStep>
-        <RecipeStep color={bubblegum} label="D" title="Then D.">
-          Raise kd until the bouncing calms down.
-        </RecipeStep>
-        <RecipeStep color={sun} label="I" title="Then a little I.">
-          If it settles off target, add ki slowly.
-        </RecipeStep>
-      </ol>
+      {variant === 'steering' ? (
+        <ol className="grid gap-3">
+          <RecipeStep color={bubblegum} label="D" title="D first.">
+            lanePid starts with kp 0.3 and weaves. Raise kd until the weaving calms down.
+          </RecipeStep>
+          <RecipeStep color={sky} label="P" title="Then P.">
+            Raise kp until the car snaps back to the center quickly, adding D if it starts to weave again.
+          </RecipeStep>
+          <RecipeStep color={sun} label="I" title="Probably no I.">
+            Nothing pushes the car to one side for long, so there is little steady error to remove.
+          </RecipeStep>
+        </ol>
+      ) : (
+        <ol className="grid gap-3">
+          <RecipeStep color={sky} label="P" title="P first.">
+            Start with ki and kd at 0. Raise kp until the car reacts quickly. A little bouncing is fine.
+          </RecipeStep>
+          <RecipeStep color={bubblegum} label="D" title="Then D.">
+            Raise kd until the bouncing calms down.
+          </RecipeStep>
+          <RecipeStep color={sun} label="I" title="Then a little I.">
+            If it settles off target, add ki slowly.
+          </RecipeStep>
+        </ol>
+      )}
       <div className="mt-1 border-t-[3px] border-[#1d1b2e] pt-4">
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-x-4 gap-y-3 text-xl font-bold">
           <div className="text-base font-black opacity-60">If you see…</div>
