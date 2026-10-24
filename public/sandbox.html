@@ -174,13 +174,12 @@
                     return { options, debug, unclamped };
                   }
                   case 'analyzeLane':
-                  case 'analyzeLaneRegression':
                     return {
                       centerOffset: result && result.centerOffset,
                       heading: result && result.heading,
                       curvature: result && result.curvature,
                       confidence: result && result.confidence,
-                      relativeTargetLane: record.name === 'analyzeLaneRegression' && args[1] !== undefined ? args[1] : 0
+                      relativeTargetLane: args[1] !== undefined ? args[1] : 0
                     };
                   case 'closestVehicleAhead':
                     return { relativeLane: args[2] === undefined ? 0 : args[2], vehicle: result };
@@ -215,10 +214,10 @@
                       mode: Number(result) < Number(freeRoadSpeed) ? 'following' : 'free road'
                     };
                   }
-                  case 'accelerationFeedforward':
-                    return { targetSpeed: args[0], currentSpeed: args[1], speedError: Number(args[0]) - Number(args[1]), output: result };
-                  case 'curvatureSteeringFeedforward':
-                    return { lane: args[0], speed: args[1], output: result };
+                  case 'speedFeedforward':
+                    return { targetSpeed: args[0], output: result };
+                  case 'steeringFeedforward':
+                    return { curvature: args[0], speed: args[1], output: result };
                   case 'clamp':
                     return {
                       input: args[0], min: args[1], max: args[2], output: result,
@@ -398,7 +397,7 @@
                     confidence: fit ? fit.confidence : __clamp((centerNear.confidence + centerMid.confidence + centerFar.confidence) / 3 || fallbackConfidence, 0, 1)
                   };
                 };
-                function analyzeLaneRegression(laneLines, relativeTargetLane = 0, mode = 'local') {
+                function analyzeLane(laneLines, relativeTargetLane = 0, mode = 'local') {
                   if (!laneLines || typeof laneLines !== 'object') return { centerOffset: 0, heading: 0, curvature: 0, confidence: 0 };
                   if (relativeTargetLane < 0) return __analyzeLaneBoundaries(laneLines.farLeft, laneLines.left, mode !== 'preview');
                   if (relativeTargetLane > 0) return __analyzeLaneBoundaries(laneLines.right, laneLines.farRight, mode !== 'preview');

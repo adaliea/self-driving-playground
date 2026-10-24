@@ -344,15 +344,6 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
     applyExample(example);
   }, [applyExample, selectedExampleId]);
 
-  const insertSnippet = useCallback((snippet: string) => {
-    setCode((current) => {
-      const nextCode = `${current.trimEnd()}\n\n${snippet}\n`;
-      codeRef.current = nextCode;
-      setSelectedExampleId(findControllerExampleIdForCode(nextCode) ?? CUSTOM_CONTROLLER_ID);
-      return nextCode;
-    });
-  }, []);
-
   const pendingExample = controllerExamples.find((example) => example.id === pendingExampleId);
 
   return (
@@ -386,7 +377,7 @@ function App({ renderTopBar, controlPanelActions }: AppProps = {}) {
               compileErrors={compileErrors}
               codeStatus={displayedCodeStatus}
               inspectionStore={inspectionStoreRef.current}
-              toolbox={<ToolboxPanel snippets={toolboxSnippets} onInsert={insertSnippet} />}
+              renderToolbox={(insertAtCursor) => <ToolboxPanel snippets={toolboxSnippets} onInsert={insertAtCursor} />}
               onCodeChange={updateCode}
               onLoadExample={loadExample}
             />
@@ -473,6 +464,7 @@ function loadStoredSettings(): PlaygroundSettings {
       noisyLaneLines: booleanOr(parsed.noisyLaneLines, DEFAULT_SETTINGS.noisyLaneLines),
       noisyVehicles: booleanOr(parsed.noisyVehicles, DEFAULT_SETTINGS.noisyVehicles),
       actuatorVariation: booleanOr(parsed.actuatorVariation, DEFAULT_SETTINGS.actuatorVariation),
+      wind: booleanOr(parsed.wind, DEFAULT_SETTINGS.wind),
       debugOverlays: booleanOr(parsed.debugOverlays, DEFAULT_SETTINGS.debugOverlays),
       steerAssist: booleanOr(parsed.steerAssist, DEFAULT_SETTINGS.steerAssist),
       accelerateAssist: booleanOr(parsed.accelerateAssist, DEFAULT_SETTINGS.accelerateAssist),

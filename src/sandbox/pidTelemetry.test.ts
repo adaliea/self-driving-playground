@@ -15,7 +15,7 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   let motor;
   if (lead) {
     let targetSpeed = lead.relativeVy + input.ego.speed;
-    motor = accelerationFeedforward(targetSpeed, targetSpeed)
+    motor = speedFeedforward(targetSpeed)
       + positionPid.update(lead.relativeY - 10, input.dt);
   } else {
     motor = 1;

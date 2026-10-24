@@ -7,7 +7,7 @@ describe('selectable telemetry signals', () => {
     expect(signals).toHaveLength(24);
     expect(new Set(signals.map((signal) => signal.key)).size).toBe(24);
     expect(signals.find((signal) => signal.key === 'pid:c:10:sum')?.label).toBe('positionPid · P + I + D');
-    expect(signals.find((signal) => signal.key === 'speed')?.axis).toBe('mph');
+    expect(signals.find((signal) => signal.key === 'speed')?.axis).toBe('m/s');
     expect(signals.find((signal) => signal.key === 'actualMotor')?.axis).toBe('Command');
   });
 

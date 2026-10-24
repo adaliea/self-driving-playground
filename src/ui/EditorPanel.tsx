@@ -1,6 +1,6 @@
 import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react';
 import { LockKeyhole } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { editor } from 'monaco-editor/esm/vs/editor/editor.api';
 import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
 import 'monaco-editor/esm/vs/editor/editor.all.js';
@@ -99,11 +99,6 @@ const autopilotHoverDocs: Record<string, string> = {
     'In addition to the filtered oriented box and relative velocity, tracks expose age, time since the last measurement, prediction status, and uncertainty.',
     '',
     'A track can remain in `input.vehicles` during a short raw-measurement dropout.',
-  ].join('\n'),
-  VehicleDetection: [
-    '**VehicleDetection**',
-    '',
-    'Deprecated compatibility name for `VehicleTrack`. New code should use `VehicleTrack`.',
     '',
     'Vehicles carry no lane number. Use `closestVehicleAhead(input.vehicles, input.laneLines)`, which counts a vehicle as in a lane when any part of its bounding box overlaps it, to find lead vehicles for adaptive cruise control.',
   ].join('\n'),
@@ -124,23 +119,14 @@ const autopilotHoverDocs: Record<string, string> = {
   LaneAnalysis: [
     '**LaneAnalysis**',
     '',
-    'Interpreted lane geometry returned by `analyzeLaneRegression(...)`.',
+    'Interpreted lane geometry returned by `analyzeLane(...)`.',
     '',
     '| Field | Meaning |',
     '| --- | --- |',
     '| `centerOffset` | Lateral offset from target lane center in meters. |',
     '| `heading` | Lane heading error in radians, at ego in local mode or ahead in preview mode. |',
-    '| `curvature` | Signed lane curvature at ego in local mode, or ahead in preview mode. |',
+    '| `curvature` | Signed lane curvature in 1/m (positive curves right), at ego in local mode or ahead in preview mode. |',
     '| `confidence` | Aggregate quality of the lane samples used for the fit. |',
-  ].join('\n'),
-  analyzeLaneRegression: [
-    '**analyzeLaneRegression(laneLines, relativeTargetLane?, mode?)**',
-    '',
-    'Built-in helper available inside user code.',
-    '',
-    'By default it fits the nearest 3–21 meters and estimates geometry at ego for steering. Pass `"preview"` as the third argument for the original longer 5–56 meter fit for speed planning.',
-    '',
-    'Use it when sharp turns or noisy lane-line samples make a simple three-point lane estimate too jumpy.',
   ].join('\n'),
   graph: [
     '**graph(name, value, unit?)**',
@@ -164,18 +150,27 @@ const autopilotHoverDocs: Record<string, string> = {
     'Creates a stateful PID controller with output limits, optional integral limits, reset, and debug terms.',
   ].join('\n'),
   analyzeLane: [
-    '**analyzeLane(laneLines)**',
+    '**analyzeLane(laneLines, relativeTargetLane?, mode?)**',
     '',
-    'Toolbox helper from `autopilot-toolbox.ts`.',
+    'Built-in helper available inside user code.',
     '',
-    'Interprets detected lane lines into center offset, heading, curvature, and confidence.',
+    'Fits a smooth curve through the nearest 3–21 meters of lane samples and estimates center offset, heading, and curvature at ego for steering.',
+    '',
+    'Pass `-1` or `1` as `relativeTargetLane` to read an adjacent lane, for example during a lane change. Pass `"preview"` as the third argument for a longer 5–56 meter fit when planning speed.',
   ].join('\n'),
-  accelerationFeedforward: [
-    '**accelerationFeedforward(targetSpeed, currentSpeed)**',
+  steeringFeedforward: [
+    '**steeringFeedforward(curvature, speed)**',
     '',
     'Toolbox helper from `autopilot-toolbox.ts`.',
     '',
-    'Estimates a motor command from speed error plus simple drag compensation.',
+    'Estimates the steering command that follows a curve of the given curvature at the given speed. Add PID feedback on the lane error to correct the rest.',
+  ].join('\n'),
+  speedFeedforward: [
+    '**speedFeedforward(targetSpeed)**',
+    '',
+    'Toolbox helper from `autopilot-toolbox.ts`.',
+    '',
+    'Estimates the motor command that holds `targetSpeed` steady against drag. Add PID feedback on the speed error to reach the speed and remove the leftover error.',
   ].join('\n'),
   adaptiveCruiseTargetSpeed: [
     '**adaptiveCruiseTargetSpeed(input, freeRoadSpeed, relativeLane?)**',
@@ -191,7 +186,7 @@ const autopilotHoverDocs: Record<string, string> = {
     '',
     'Creates a stateful chooser. Call `update(input)` once per tick; it returns the lane to steer toward relative to ego (`-1` left, `0` current, `1` right).',
     '',
-    'An adjacent lane is chosen only when its traffic is faster than the current lane by at least `options.minSpeedGain` m/s (default 2) and there is room to merge. Your steering has to follow it, e.g. `analyzeLaneRegression(input.laneLines, relativeLane)`.',
+    'An adjacent lane is chosen only when its traffic is faster than the current lane by at least `options.minSpeedGain` m/s (default 2) and there is room to merge. Your steering has to follow it, e.g. `analyzeLane(input.laneLines, relativeLane)`.',
   ].join('\n'),
   PidDebugTerms: [
     '**PidDebugTerms**',
@@ -293,7 +288,11 @@ interface EditorPanelProps {
   compileErrors: string[];
   codeStatus: string;
   inspectionStore: RuntimeInspectionStore;
-  toolbox: ReactNode;
+  /**
+   * Renders the toolbox menu. `insertAtCursor` adds code at the Autopilot.ts cursor,
+   * and puts any `setup` declarations not already in the file above autopilot(input).
+   */
+  renderToolbox: (insertAtCursor: (code: string, setup?: string[]) => void) => ReactNode;
   onCodeChange: (code: string) => void;
   onLoadExample: (id: string) => void;
 }
@@ -305,7 +304,7 @@ export function EditorPanel({
   compileErrors,
   codeStatus,
   inspectionStore,
-  toolbox,
+  renderToolbox,
   onCodeChange,
   onLoadExample,
 }: EditorPanelProps) {
@@ -313,6 +312,8 @@ export function EditorPanel({
   const editorOpenerRef = useRef<monacoEditor.IDisposable | null>(null);
   const runtimeHoverDisposablesRef = useRef<monacoEditor.IDisposable[]>([]);
   const pendingRevealRef = useRef<EditorLocation>();
+  // Until someone clicks into the code, the cursor sits at line 1, so inserts append instead.
+  const hasPlacedCursorRef = useRef(false);
   const [activeFile, setActiveFile] = useState<ActiveEditorFile>('autopilot');
   const isToolboxActive = activeFile === 'toolbox';
   const isApiActive = activeFile === 'api';
@@ -360,6 +361,10 @@ export function EditorPanel({
 
   const onMount: OnMount = (editorInstance) => {
     editorRef.current = editorInstance;
+    editorInstance.onDidFocusEditorText(() => {
+      const model = editorInstance.getModel();
+      if (model && editorFileForUri(model.uri) === 'autopilot') hasPlacedCursorRef.current = true;
+    });
     editorOpenerRef.current?.dispose();
     for (const disposable of runtimeHoverDisposablesRef.current) disposable.dispose();
     runtimeHoverDisposablesRef.current = [];
@@ -386,6 +391,37 @@ export function EditorPanel({
       new RuntimeValueWidget(monacoEditor, editorInstance, inspectionStore, autopilotModelUri),
     ];
   };
+
+  const insertAtCursor = useCallback((code: string, setup: string[] = []) => {
+    const currentEditor = editorRef.current;
+    const model = currentEditor?.getModel();
+    if (!currentEditor || !model || editorFileForUri(model.uri) !== 'autopilot') return;
+    const selection = hasPlacedCursorRef.current ? currentEditor.getSelection() : null;
+    const edits = [insertionEdit(model, selection, code)];
+    const missingSetup = setup.filter((block) => !declaresSameName(model.getValue(), block));
+    if (missingSetup.length > 0) {
+      const setupText = `${missingSetup.join('\n\n')}\n\n`;
+      const autopilotLine = model.findMatches('^export\\s+function\\s+autopilot\\b', false, true, true, null, false)[0]
+        ?.range.startLineNumber ?? 1;
+      if (selection && selection.startLineNumber <= autopilotLine) {
+        // The cursor is already above autopilot, so the setup can go right where the code goes.
+        edits[0] = { ...edits[0], text: `${setupText}${edits[0].text}` };
+      } else {
+        edits.push({ range: new monacoEditor.Range(autopilotLine, 1, autopilotLine, 1), text: setupText, forceMoveMarkers: true });
+      }
+    }
+    currentEditor.executeEdits(
+      'toolbox',
+      edits,
+      (inverseEdits) => {
+        const end = inverseEdits[0].range.getEndPosition();
+        return [new monacoEditor.Selection(end.lineNumber, end.column, end.lineNumber, end.column)];
+      },
+    );
+    currentEditor.pushUndoStop();
+    currentEditor.revealPositionInCenterIfOutsideViewport(currentEditor.getPosition()!);
+    currentEditor.focus();
+  }, []);
 
   useEffect(() => {
     if (!pendingRevealRef.current) return undefined;
@@ -427,7 +463,7 @@ export function EditorPanel({
             </span>
           ) : (
             <>
-              {toolbox}
+              {renderToolbox(insertAtCursor)}
               <label className="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs text-muted-foreground focus-within:ring-1 focus-within:ring-ring">
                 <span className="sr-only">Load example controller</span>
                 <select
@@ -509,6 +545,52 @@ export function EditorPanel({
       </div>
     </section>
   );
+}
+
+/** True when `source` already declares the variable that `block` declares. */
+function declaresSameName(source: string, block: string): boolean {
+  const name = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(block)?.[1];
+  return name !== undefined && new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, '\\$')}\\b`).test(source);
+}
+
+/**
+ * Builds the edit that puts a toolbox snippet at the cursor, replacing any
+ * selection. The snippet gets its own lines, indented like the cursor's line.
+ * Without a cursor it goes at the end of the file.
+ */
+function insertionEdit(
+  model: editor.ITextModel,
+  selection: monacoEditor.Selection | null,
+  code: string,
+): editor.IIdentifiedSingleEditOperation {
+  if (!selection) {
+    const lastLine = model.getLineCount();
+    const end = model.getLineMaxColumn(lastLine);
+    const separator = model.getValue().trim() ? '\n\n' : '';
+    return {
+      range: new monacoEditor.Range(lastLine, end, lastLine, end),
+      text: `${separator}${code}\n`,
+      forceMoveMarkers: true,
+    };
+  }
+
+  const line = model.getLineContent(selection.startLineNumber);
+  const indent = /^\s*/.exec(line)![0];
+  const before = line.slice(0, selection.startColumn - 1);
+  const after = model.getLineContent(selection.endLineNumber).slice(selection.endColumn - 1);
+  const startsOwnLine = !before.trim();
+  const body = code
+    .split('\n')
+    .map((codeLine, index) => (codeLine === '' || (index === 0 && !startsOwnLine) ? codeLine : indent + codeLine))
+    .join('\n');
+  return {
+    // On a blank or indent-only stretch, replace the leading whitespace so the indent isn't doubled.
+    range: startsOwnLine
+      ? new monacoEditor.Range(selection.startLineNumber, 1, selection.endLineNumber, selection.endColumn)
+      : selection,
+    text: `${startsOwnLine ? '' : `\n${indent}`}${body}${after.trim() ? `\n${/^\s/.test(after) ? '' : indent}` : ''}`,
+    forceMoveMarkers: true,
+  };
 }
 
 function EditorTab({ active, onSelect, label, readOnly = false }: { active: boolean; onSelect: () => void; label: string; readOnly?: boolean }) {

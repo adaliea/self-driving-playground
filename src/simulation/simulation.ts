@@ -9,6 +9,7 @@ import {
   trafficAutopilot,
 } from './controllers';
 import { applyVehiclePhysics, roadEdgeLimit } from './physics';
+import { Wind } from './wind';
 import { Road } from './road';
 import { SeededRandom } from './random';
 import { SensorSimulator } from './sensors';
@@ -171,6 +172,7 @@ interface CollisionEventState extends Omit<RenderCollisionEvent, 'age'> {
 export class Simulation {
   private road: Road;
   private rng: SeededRandom;
+  private wind: Wind;
   private readonly sensors = new SensorSimulator();
   private vehicles: VehicleState[] = [];
   private time = 0;
@@ -193,6 +195,7 @@ export class Simulation {
     this.trafficAhead = options.trafficWindow?.ahead ?? TRAFFIC_FRONT_BUFFER;
     this.road = new Road(settings.seed);
     this.rng = new SeededRandom(settings.seed);
+    this.wind = new Wind(settings.seed);
     this.reset(settings);
     for (const player of this.players) this.createPlayerInput(player.id, settings, 1 / 45);
   }
@@ -200,6 +203,7 @@ export class Simulation {
   reset(settings: PlaygroundSettings): void {
     this.road = new Road(settings.seed);
     this.rng = new SeededRandom(settings.seed);
+    this.wind = new Wind(settings.seed);
     this.sensors.reset();
     this.time = 0;
     this.collisions = 0;
@@ -279,6 +283,7 @@ export class Simulation {
     this.time += dt;
     this.road.extendTo(this.maxPlayerS() + 700);
     this.ensureTrafficCount(settings);
+    const windAccel = settings.wind ? this.wind.step(dt) : 0;
 
     for (const runtime of this.playerRuntimes.values()) {
       const ego = this.playerVehicle(runtime.id);
@@ -296,7 +301,7 @@ export class Simulation {
         steering: settings.steerAssist ? builtInAssistLaneKeeping(input) : user.steering,
       };
 
-      applyVehiclePhysics(ego, this.road, finalOutput, dt, this.rng, settings.actuatorVariation);
+      applyVehiclePhysics(ego, this.road, finalOutput, dt, this.rng, settings.actuatorVariation, windAccel);
       this.trackEdgeHit(runtime, ego);
       ego.targetLane = ego.laneIndex;
       ego.settledLane = this.settledLaneOf(ego);
@@ -325,7 +330,7 @@ export class Simulation {
         ...traffic,
         steering: builtInLaneCentering(vehicle, this.road, vehicle.targetLane, this.trafficWeaveOffset(vehicle, dt)),
       };
-      applyVehiclePhysics(vehicle, this.road, finalTraffic, dt, this.rng, settings.actuatorVariation);
+      applyVehiclePhysics(vehicle, this.road, finalTraffic, dt, this.rng, settings.actuatorVariation, windAccel);
     }
 
     this.resolveCloseVehicles();
@@ -475,7 +480,7 @@ export class Simulation {
     if (!lead) return undefined;
     return {
       id: lead.id,
-      speedMph: metersPerSecondToMph(input.ego.speed + lead.relativeVy),
+      speed: input.ego.speed + lead.relativeVy,
       relativeX: lead.relativeX,
       relativeY: lead.relativeY,
       relativeVx: lead.relativeVx,

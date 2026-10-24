@@ -10,6 +10,7 @@ export function raceSettings(round: number, trafficDensity: number): PlaygroundS
     noisyLaneLines: true,
     noisyVehicles: true,
     actuatorVariation: true,
+    wind: true,
     debugOverlays: false,
     steerAssist: false,
     accelerateAssist: false,

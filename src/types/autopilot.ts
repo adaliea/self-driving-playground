@@ -184,12 +184,6 @@ export interface VehicleTrack {
 }
 
 /**
- * Backwards-compatible name for a tracked vehicle.
- * @deprecated Prefer VehicleTrack in new examples.
- */
-export type VehicleDetection = VehicleTrack;
-
-/**
  * A sampled point on a detected lane line in ego-relative coordinates.
  */
 export interface LaneLineSample {
@@ -218,8 +212,7 @@ export interface LaneLineDetections {
 }
 
 /**
- * Interpreted lane geometry returned by helper functions such as
- * analyzeLaneRegression.
+ * Interpreted lane geometry returned by analyzeLane.
  */
 export interface LaneAnalysis {
   /**
@@ -273,6 +266,8 @@ export interface PlaygroundSettings {
   noisyLaneLines: boolean;
   noisyVehicles: boolean;
   actuatorVariation: boolean;
+  /** Steady headwind or tailwind for the run, plus gusts. */
+  wind: boolean;
   debugOverlays: boolean;
   steerAssist: boolean;
   accelerateAssist: boolean;

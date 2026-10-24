@@ -13,303 +13,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }`;
 
-export const vehicleTrackerImplementation = `/**
- * Tuning options for the educational constant-velocity vehicle tracker.
- */
-interface VehicleTrackerOptions {
-  /** Seconds to publish predictions without a matching measurement. Default: 0.42. */
-  maxPredictionTime?: number;
-  /** Expected relative acceleration in meters per second squared. Default: 3.2. */
-  accelerationStdDev?: number;
-}
-
-/** Stateful tracker returned by createVehicleTracker. */
-interface VehicleTracker {
-  /**
-   * Predicts existing tracks, incorporates this frame's measurements, and returns current tracks.
-   *
-   * Pass input.ego so prediction can undo ego motion: tracks live in the ego
-   * frame, which rotates whenever ego turns (lane changes and road curves), and
-   * without ego.yawRate a constant-velocity model mistakes that rotation for
-   * every other car swinging sideways.
-   */
-  update(measurements: VehicleMeasurement[], dt: number, ego?: EgoState): VehicleTrack[];
-  /** Removes all track history. */
-  reset(): void;
-}
-
-interface VehicleTrackerAxisState {
-  position: number;
-  velocity: number;
-  p00: number;
-  p01: number;
-  p11: number;
-}
-
-/** How the ego frame moved since the previous update. */
-interface VehicleTrackerEgoMotion {
-  dt: number;
-  /** World yaw change of ego over the tick, in radians. */
-  yawDelta: number;
-  /** Road curvature in 1/m (positive curves right), so other cars can follow the curve too. */
-  roadCurvature: number;
-  previousSpeed: number;
-  speed: number;
-}
-
-interface VehicleTrackerState {
-  id: string;
-  x: VehicleTrackerAxisState;
-  y: VehicleTrackerAxisState;
-  heading: number;
-  headingVariance: number;
-  width: number;
-  length: number;
-  confidence: number;
-  age: number;
-  timeSinceMeasurement: number;
-  isPredicted: boolean;
-}
-
-/**
- * Creates a small constant-velocity Kalman tracker for input.vehicleMeasurements.
- *
- * Keep the returned object outside autopilot(input) so its state survives from
- * one control tick to the next. The playground supplies stable measurement ids
- * to keep this lesson focused on filtering; production trackers also need data
- * association.
- */
-function createVehicleTracker(options: VehicleTrackerOptions = {}): VehicleTracker {
-  const states = new Map<string, VehicleTrackerState>();
-  const maxPredictionTime = options.maxPredictionTime ?? 0.42;
-  const accelerationStdDev = options.accelerationStdDev ?? 3.2;
-  let previousEgo: EgoState | undefined;
-  let roadCurvature = 0;
-
-  return {
-    update(measurements: VehicleMeasurement[], dt: number, ego?: EgoState): VehicleTrack[] {
-      const safeDt = clamp(dt, 0, 0.25);
-      let egoMotion: VehicleTrackerEgoMotion | undefined;
-      if (ego) {
-        // Physical yaw rates stay under 1 rad/s; anything faster is a reset.
-        const yawDelta = Math.abs(ego.yawRate) < 3 ? ego.yawRate * safeDt : 0;
-        const previousSpeed = previousEgo ? previousEgo.speed : ego.speed;
-        // ego.heading is road-relative, so yaw it doesn't explain is the road curving.
-        const roadDistance = 0.5 * (previousSpeed + ego.speed) * safeDt * Math.cos(ego.heading);
-        if (previousEgo && roadDistance > 0.05) {
-          const roadTurn = yawDelta - normalizeTrackerAngle(ego.heading - previousEgo.heading);
-          roadCurvature = clamp(roadTurn / roadDistance, -0.04, 0.04);
-        }
-        egoMotion = { dt: safeDt, yawDelta, roadCurvature, previousSpeed, speed: ego.speed };
-      }
-      previousEgo = ego && { ...ego };
-
-      for (const state of states.values()) {
-        predictVehicleTrackerAxis(state.x, safeDt, accelerationStdDev);
-        predictVehicleTrackerAxis(state.y, safeDt, accelerationStdDev);
-        if (egoMotion) compensateVehicleTrackerEgoMotion(state, egoMotion);
-        state.headingVariance += Math.pow(5 * Math.PI / 180, 2) * safeDt;
-        state.age += safeDt;
-        state.timeSinceMeasurement += safeDt;
-        state.isPredicted = true;
-        state.confidence *= Math.exp(-safeDt / 0.34);
-      }
-
-      for (const measurement of measurements) {
-        let state = states.get(measurement.id);
-        if (!state) {
-          state = initializeVehicleTrackerState(measurement, safeDt);
-          states.set(measurement.id, state);
-          continue;
-        }
-
-        updateVehicleTrackerAxis(
-          state.x,
-          measurement.relativeX,
-          Math.pow(measurement.uncertainty.lateralPosition, 2)
-        );
-        updateVehicleTrackerAxis(
-          state.y,
-          measurement.relativeY,
-          Math.pow(measurement.uncertainty.longitudinalPosition, 2)
-        );
-
-        const headingNoise = Math.max(Math.pow(measurement.uncertainty.heading, 2), 1e-6);
-        const headingGain = state.headingVariance / (state.headingVariance + headingNoise);
-        state.heading = normalizeTrackerAngle(
-          state.heading + headingGain * normalizeTrackerAngle(measurement.relativeHeading - state.heading)
-        );
-        state.headingVariance = Math.max(1e-9, (1 - headingGain) * state.headingVariance);
-        state.width += (measurement.width - state.width) * 0.28;
-        state.length += (measurement.length - state.length) * 0.22;
-        state.confidence = clamp(state.confidence * 0.58 + measurement.confidence * 0.42, 0, 1);
-        state.timeSinceMeasurement = 0;
-        state.isPredicted = false;
-      }
-
-      for (const [id, state] of states) {
-        if (state.timeSinceMeasurement > maxPredictionTime) states.delete(id);
-      }
-
-      return Array.from(states.values())
-        .map(vehicleTrackFromState)
-        .sort((a, b) => a.relativeY - b.relativeY);
-    },
-
-    reset(): void {
-      states.clear();
-      previousEgo = undefined;
-      roadCurvature = 0;
-    },
-  };
-}
-
-function initializeVehicleTrackerState(
-  measurement: VehicleMeasurement,
-  dt: number
-): VehicleTrackerState {
-  return {
-    id: measurement.id,
-    x: initializeVehicleTrackerAxis(
-      measurement.relativeX,
-      Math.pow(measurement.uncertainty.lateralPosition, 2)
-    ),
-    y: initializeVehicleTrackerAxis(
-      measurement.relativeY,
-      Math.pow(measurement.uncertainty.longitudinalPosition, 2)
-    ),
-    heading: measurement.relativeHeading,
-    headingVariance: Math.max(Math.pow(measurement.uncertainty.heading, 2), 1e-6),
-    width: measurement.width,
-    length: measurement.length,
-    confidence: measurement.confidence,
-    age: dt,
-    timeSinceMeasurement: 0,
-    isPredicted: false,
-  };
-}
-
-function initializeVehicleTrackerAxis(
-  position: number,
-  positionVariance: number
-): VehicleTrackerAxisState {
-  return {
-    position,
-    velocity: 0,
-    p00: Math.max(positionVariance, 1e-6),
-    p01: 0,
-    // One box does not reveal velocity, so the initial velocity covariance is intentionally high.
-    p11: 36,
-  };
-}
-
-function predictVehicleTrackerAxis(
-  axis: VehicleTrackerAxisState,
-  dt: number,
-  accelerationStdDev: number
-): void {
-  const accelerationVariance = Math.pow(accelerationStdDev, 2);
-  const oldP01 = axis.p01;
-  const oldP11 = axis.p11;
-  axis.position += axis.velocity * dt;
-  axis.p00 += 2 * dt * oldP01 + Math.pow(dt, 2) * oldP11 +
-    0.25 * Math.pow(dt, 4) * accelerationVariance;
-  axis.p01 += dt * oldP11 + 0.5 * Math.pow(dt, 3) * accelerationVariance;
-  axis.p11 += Math.pow(dt, 2) * accelerationVariance;
-}
-
-/**
- * Moves a freshly predicted track from last tick's ego frame into this tick's.
- *
- * The constant-velocity step assumed ego drove straight at its old speed. Here
- * we use where ego actually went (a short arc) and rotate position by the ego
- * yaw change. Velocity is the target's world velocity (relative velocity plus
- * ego speed) minus ego's speed: the world part rotates with the frame, less
- * the turn the target makes by following the road curve, then ego's new speed
- * is subtracted. Each covariance block is rotated too, keeping per-axis
- * variances so x and y stay separate filters.
- */
-function compensateVehicleTrackerEgoMotion(
-  state: VehicleTrackerState,
-  ego: VehicleTrackerEgoMotion
-): void {
-  const cos = Math.cos(ego.yawDelta);
-  const sin = Math.sin(ego.yawDelta);
-  const egoDistance = 0.5 * (ego.previousSpeed + ego.speed) * ego.dt;
-  const x = state.x.position - egoDistance * Math.sin(ego.yawDelta / 2);
-  const y = state.y.position + ego.previousSpeed * ego.dt - egoDistance * Math.cos(ego.yawDelta / 2);
-  state.x.position = x * cos - y * sin;
-  state.y.position = x * sin + y * cos;
-
-  const worldVx = state.x.velocity;
-  const worldVy = state.y.velocity + ego.previousSpeed;
-  const targetTurn = ego.roadCurvature * worldVy * ego.dt;
-  const vCos = Math.cos(ego.yawDelta - targetTurn);
-  const vSin = Math.sin(ego.yawDelta - targetTurn);
-  state.x.velocity = worldVx * vCos - worldVy * vSin;
-  state.y.velocity = worldVx * vSin + worldVy * vCos - ego.speed;
-  state.heading = normalizeTrackerAngle(state.heading - ego.yawDelta + targetTurn);
-
-  const x00 = state.x.p00, x01 = state.x.p01, x11 = state.x.p11;
-  const y00 = state.y.p00, y01 = state.y.p01, y11 = state.y.p11;
-  state.x.p00 = cos * cos * x00 + sin * sin * y00;
-  state.x.p01 = cos * vCos * x01 + sin * vSin * y01;
-  state.x.p11 = vCos * vCos * x11 + vSin * vSin * y11;
-  state.y.p00 = sin * sin * x00 + cos * cos * y00;
-  state.y.p01 = sin * vSin * x01 + cos * vCos * y01;
-  state.y.p11 = vSin * vSin * x11 + vCos * vCos * y11;
-}
-
-function updateVehicleTrackerAxis(
-  axis: VehicleTrackerAxisState,
-  measurement: number,
-  measurementVariance: number
-): void {
-  const innovationVariance = axis.p00 + Math.max(measurementVariance, 1e-6);
-  const positionGain = axis.p00 / innovationVariance;
-  const velocityGain = axis.p01 / innovationVariance;
-  const innovation = measurement - axis.position;
-  const oldP00 = axis.p00;
-  const oldP01 = axis.p01;
-  const oldP11 = axis.p11;
-  axis.position += positionGain * innovation;
-  axis.velocity += velocityGain * innovation;
-  axis.p00 = Math.max(1e-9, (1 - positionGain) * oldP00);
-  axis.p01 = (1 - positionGain) * oldP01;
-  axis.p11 = Math.max(1e-9, oldP11 - velocityGain * oldP01);
-}
-
-function vehicleTrackFromState(state: VehicleTrackerState): VehicleTrack {
-  return {
-    id: state.id,
-    relativeX: state.x.position,
-    relativeY: state.y.position,
-    relativeVx: state.x.velocity,
-    relativeVy: state.y.velocity,
-    relativeHeading: state.heading,
-    width: state.width,
-    length: state.length,
-    confidence: clamp(state.confidence, 0, 1),
-    age: state.age,
-    timeSinceMeasurement: state.timeSinceMeasurement,
-    isPredicted: state.isPredicted,
-    uncertainty: {
-      lateralPosition: Math.sqrt(state.x.p00),
-      longitudinalPosition: Math.sqrt(state.y.p00),
-      lateralVelocity: Math.sqrt(state.x.p11),
-      longitudinalVelocity: Math.sqrt(state.y.p11),
-      heading: Math.sqrt(state.headingVariance),
-    },
-  };
-}
-
-function normalizeTrackerAngle(angle: number): number {
-  let result = angle;
-  while (result > Math.PI) result -= Math.PI * 2;
-  while (result < -Math.PI) result += Math.PI * 2;
-  return result;
-}`;
-
 export const vehicleFilteringImplementation = `/** Nominal lane width in meters, used when a lane line isn't detected. */
 const LANE_WIDTH = 3.7;
 
@@ -355,10 +58,10 @@ function isVehicleInLane(
  * @returns Vehicles with any part of their footprint in the lane.
  */
 function filterVehiclesInLane(
-  vehicles: VehicleDetection[],
+  vehicles: VehicleTrack[],
   laneLines: LaneLineDetections,
   relativeLane = 0
-): VehicleDetection[] {
+): VehicleTrack[] {
   return vehicles.filter(vehicle => isVehicleInLane(vehicle, laneLines, relativeLane));
 }
 
@@ -371,10 +74,10 @@ function filterVehiclesInLane(
  * @returns The closest vehicle with positive relativeY, or undefined when the lane is clear.
  */
 function closestVehicleAhead(
-  vehicles: VehicleDetection[],
+  vehicles: VehicleTrack[],
   laneLines: LaneLineDetections,
   relativeLane = 0
-): VehicleDetection | undefined {
+): VehicleTrack | undefined {
   return filterVehiclesInLane(vehicles, laneLines, relativeLane)
     .filter(vehicle => vehicle.relativeY > 0)
     .sort((a, b) => a.relativeY - b.relativeY)[0];
@@ -623,112 +326,42 @@ function createPidController(options: PidControllerOptions): PidController {
   };
 }`;
 
-export const laneInterpretationImplementation = `/**
- * Estimates lane center offset, heading, curvature, and confidence.
+export const speedFeedforwardImplementation = `/**
+ * Estimates the motor command that holds a speed steady.
  *
- * This simpler helper samples the current lane boundaries at near, mid, and far
- * lookahead points. For sharper curves or lane-change experiments, try
- * analyzeLaneRegression instead.
+ * At a constant speed the motor only has to cancel drag, and the motor gets
+ * weaker as the car nears its top speed. This models both exactly, but not
+ * the wind: each run has a steady headwind or tailwind plus gusts. Add PID
+ * feedback on the speed error. P closes the gap to a new speed and I learns
+ * the steady wind this estimate can't see.
  *
- * @param laneLines Detected lane-line samples around the ego lane.
- * @returns Interpreted lane geometry for steering control.
+ * @param targetSpeed Speed to hold, in meters per second.
+ * @returns Normalized motor estimate in [0, 1].
  */
-function analyzeLane(laneLines: LaneLineDetections): LaneAnalysis {
-  const centerAt = (y: number) => {
-    const left = sampleLineAtY(laneLines.left, y);
-    const right = sampleLineAtY(laneLines.right, y);
-
-    if (left && right) {
-      return {
-        x: (left.x + right.x) / 2,
-        confidence: (left.confidence + right.confidence) / 2,
-      };
-    }
-
-    if (left) return { x: left.x + 1.85, confidence: left.confidence * 0.5 };
-    if (right) return { x: right.x - 1.85, confidence: right.confidence * 0.5 };
-    return { x: 0, confidence: 0 };
-  };
-
-  const near = centerAt(12);
-  const mid = centerAt(34);
-  const far = centerAt(62);
-
-  return {
-    centerOffset: near.x,
-    heading: Math.atan2(far.x - near.x, 50),
-    curvature: ((far.x - mid.x) - (mid.x - near.x)) / 900,
-    confidence: (near.confidence + mid.confidence + far.confidence) / 3,
-  };
-}
-
-/**
- * Interpolates a lane-line sample at a forward distance.
- *
- * @param samples Lane-line samples sorted or unsorted by y.
- * @param y Forward distance in meters from the ego vehicle.
- * @returns An interpolated sample, or undefined when no samples are available.
- */
-function sampleLineAtY(samples: LaneLineSample[], y: number): LaneLineSample | undefined {
-  if (samples.length === 0) return undefined;
-  const sorted = [...samples].sort((a, b) => a.y - b.y);
-  let before = sorted[0];
-  let after = sorted[sorted.length - 1];
-
-  for (const sample of sorted) {
-    if (sample.y <= y) before = sample;
-    if (sample.y >= y) {
-      after = sample;
-      break;
-    }
-  }
-
-  if (before === after) return before;
-  const t = (y - before.y) / Math.max(0.001, after.y - before.y);
-  return {
-    x: before.x + (after.x - before.x) * t,
-    y,
-    confidence: before.confidence + (after.confidence - before.confidence) * t,
-  };
+function speedFeedforward(targetSpeed: number): number {
+  const speed = Math.max(0, targetSpeed);
+  // Air drag grows with speed squared, rolling resistance with speed.
+  const dragAccel = 0.00085 * speed * speed + 0.012 * speed;
+  // Full motor pushes 4.5 m/s² at standstill, fading to nothing at the 58 m/s top speed.
+  const fullMotorAccel = 4.5 * (1 - Math.pow(Math.min(speed / 58, 1), 1.65));
+  return clamp(dragAccel / Math.max(fullMotorAccel, 0.01), 0, 1);
 }`;
 
-export const accelerationFeedforwardImplementation = `/**
- * Estimates a motor command before PID feedback is added.
+export const steeringFeedforwardImplementation = `/**
+ * Estimates the steering command that follows a curve.
  *
- * Feedforward gives the speed controller a rough starting point for acceleration
- * and drag, so the PID loop has less steady error to correct.
+ * Steering sets how fast the car turns: full lock turns at 0.68 rad/s, less
+ * below 22 m/s. Following a curve means turning at curvature × speed, so this
+ * inverts that. Add PID feedback on the lane error to correct whatever drift
+ * the estimate leaves behind.
  *
- * @param targetSpeed Desired speed in meters per second.
- * @param currentSpeed Current ego speed in meters per second.
- * @returns Normalized motor estimate, clamped to [-1, 1].
- */
-function accelerationFeedforward(
-  targetSpeed: number,
-  currentSpeed: number
-): number {
-  const speedError = targetSpeed - currentSpeed;
-  const dragCompensation = 0.00048 * currentSpeed * currentSpeed + 0.004 * currentSpeed;
-  const requestedAccel = speedError * 0.09 + dragCompensation;
-  return clamp(requestedAccel, -1, 1);
-}`;
-
-export const curveRegressionImplementation = `/**
- * Converts lane curvature into a steering feedforward term.
- *
- * Use this alongside PID feedback so the controller begins turning before a
- * curve creates a large lateral error.
- *
- * @param lane Interpreted lane geometry.
+ * @param curvature Lane curvature in 1/m, from analyzeLane(...).curvature. Positive curves right.
  * @param speed Ego speed in meters per second.
- * @returns Steering feedforward clamped to [-0.4, 0.4].
+ * @returns Normalized steering estimate in [-1, 1].
  */
-function curvatureSteeringFeedforward(
-  lane: LaneAnalysis,
-  speed: number
-): number {
-  const steeringScale = Math.max(0.08, Math.min(1, speed / 22));
-  const feedforward = (lane.curvature * speed) / Math.max(0.08, 0.68 * steeringScale);
-  return clamp(feedforward, -0.4, 0.4);
+function steeringFeedforward(curvature: number, speed: number): number {
+  const fullLockTurnRate = 0.68 * clamp(speed / 22, 0.08, 1);
+  return clamp((curvature * speed) / fullLockTurnRate, -1, 1);
 }`;
 
 export const adaptiveCruiseImplementation = `/**
@@ -751,7 +384,7 @@ function adaptiveCruiseTargetSpeed(
   const leads = [closestVehicleAhead(input.vehicles, input.laneLines)];
   if (relativeLane !== 0) leads.push(closestVehicleAhead(input.vehicles, input.laneLines, relativeLane));
   const lead = leads
-    .filter((vehicle): vehicle is VehicleDetection => vehicle !== undefined)
+    .filter((vehicle): vehicle is VehicleTrack => vehicle !== undefined)
     .sort((a, b) => a.relativeY - b.relativeY)[0];
   if (!lead) return freeRoadSpeed;
 
@@ -808,7 +441,7 @@ interface LaneChooser {
  * it waits for the cooldown before choosing again.
  *
  * The chooser only picks a lane: your steering has to follow it, for example
- * analyzeLaneRegression(input.laneLines, relativeLane). Keep the returned object
+ * analyzeLane(input.laneLines, relativeLane). Keep the returned object
  * outside autopilot(input) so its state survives between ticks.
  *
  * @param options Tuning. Every field is optional:
@@ -915,10 +548,8 @@ export const toolboxLibrarySource = [
   clampImplementation,
   vehicleFilteringImplementation,
   pidControllerImplementation,
-  laneInterpretationImplementation,
-  accelerationFeedforwardImplementation,
-  curveRegressionImplementation,
+  speedFeedforwardImplementation,
+  steeringFeedforwardImplementation,
   adaptiveCruiseImplementation,
   laneSelectionImplementation,
-  vehicleTrackerImplementation,
 ].join('\n\n');

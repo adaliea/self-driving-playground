@@ -117,7 +117,7 @@ Known simplifications:
 - Tire dynamics, suspension, and exact collision geometry are intentionally simplified.
 - Traffic decisions are local heuristics rather than full planning.
 - Lane samples are generated from known road geometry with perception noise, not image processing.
-- The player car has no declared target lane. To change lanes, steer toward an adjacent lane yourself (for example with `createLaneChooser` and `analyzeLaneRegression(input.laneLines, relativeLane)`). For collision blame, a player belongs to the lane it last settled in (centered and aligned), so drifting across a line without settling is judged as leaving your lane.
+- The player car has no declared target lane. To change lanes, steer toward an adjacent lane yourself (for example with `createLaneChooser` and `analyzeLane(input.laneLines, relativeLane)`). For collision blame, a player belongs to the lane it last settled in (centered and aligned), so drifting across a line without settling is judged as leaving your lane.
 
 ## Built-In Examples
 
@@ -138,31 +138,35 @@ To plot anything else, call `graph(name, value, unit?)` from your autopilot code
 
 ## Toolbox
 
-The toolbox panel provides inspectable TypeScript helpers from a virtual `autopilot-toolbox.ts` file:
+The toolbox panel lists helpers from a virtual `autopilot-toolbox.ts` file, each with an animated diagram of what it does:
 
 - `clamp`
 - vehicle lane filtering and closest-vehicle-ahead
-- stateful PID controller object
-- lane-line interpretation
-- acceleration feedforward
-- adaptive cruise target-speed snippet
+- stateful PID controller object (`createPidController`)
+- lane reading (`analyzeLane`)
+- speed feedforward (`speedFeedforward`)
+- steering feedforward (`steeringFeedforward`)
+- adaptive cruise target speed (`adaptiveCruiseTargetSpeed`)
 - stateful fastest-lane chooser (`createLaneChooser`)
 
-Each helper can insert a short usage example at the bottom of the editor. The implementations stay out of `Autopilot.ts`, but Monaco can still navigate to them with Go to Definition / Ctrl-click, opening the read-only toolbox file at the definition.
+**Insert usage** puts a short example at the editor cursor. Declarations that must keep state between ticks, such as a PID controller, go above `autopilot` instead, unless the file already declares them. The implementations stay out of `Autopilot.ts`, but Monaco can still navigate to them with Go to Definition / Ctrl-click, opening the read-only toolbox file at the definition.
 
-### Local lane regression and preview
+### Feedforward and wind
 
-`analyzeLaneRegression(input.laneLines)` defaults to
-fitting the nearest 3–21 meters of lane samples and estimating geometry at ego.
-Use this local geometry for steering so distant corner entries and exits do not
-advance the steering response. Existing calls receive this behavior automatically.
+`speedFeedforward(targetSpeed)` returns the motor that holds a speed against drag, and `steeringFeedforward(curvature, speed)` returns the steering that follows a curve. Both are exact models of the car, so PID feedback only has to correct what they miss. On the speed side that is mostly wind: each run has a steady headwind or tailwind plus gusts (toggle **Wind** in Settings), which only an integral term can cancel.
 
-For the original longer 5–56 meter fit, select `"preview"` when planning speed:
+### Lane reading
+
+`analyzeLane(input.laneLines)` fits the nearest 3–21 meters of lane samples and
+estimates center offset, heading, and curvature at ego. Use this local geometry
+for steering so distant corner entries and exits do not advance the steering response.
+
+For a longer 5–56 meter fit, select `"preview"` when planning speed:
 
 ```ts
-const lane = analyzeLaneRegression(input.laneLines); // Local steering geometry.
-const preview = analyzeLaneRegression(input.laneLines, 0, "preview"); // Upcoming road geometry.
+const lane = analyzeLane(input.laneLines); // Local steering geometry.
+const preview = analyzeLane(input.laneLines, 0, "preview"); // Upcoming road geometry.
 // Pass -1 or 1 to analyze an adjacent lane, e.g. the one a lane chooser returns:
 const relativeLane = laneChooser.update(input);
-const nextLane = analyzeLaneRegression(input.laneLines, relativeLane);
+const nextLane = analyzeLane(input.laneLines, relativeLane);
 ```

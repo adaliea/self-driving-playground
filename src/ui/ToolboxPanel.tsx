@@ -1,25 +1,50 @@
 import { Braces, Wrench } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { ToolboxSnippet } from '../toolbox';
 import { Button } from './Button';
+import { ToolboxVisual } from './ToolboxVisuals';
 
 interface ToolboxPanelProps {
   snippets: ToolboxSnippet[];
-  onInsert: (snippet: string) => void;
+  onInsert: (code: string, setup?: string[]) => void;
 }
+
+const POPOVER_WIDTH = 720;
 
 export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLDivElement>(null);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>();
   const [selectedId, setSelectedId] = useState(snippets[0]?.id ?? '');
   const selected = useMemo(
     () => snippets.find((snippet) => snippet.id === selectedId) ?? snippets[0],
     [selectedId, snippets],
   );
 
+  // The button sits mid-header, so line the popover up with it but keep it on screen.
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const anchor = buttonRef.current?.getBoundingClientRect();
+      if (!anchor) return;
+      const margin = 8;
+      const width = Math.min(POPOVER_WIDTH, window.innerWidth - margin * 2);
+      const left = Math.max(margin, Math.min(anchor.right - width, window.innerWidth - width - margin));
+      setPopoverStyle({ left, top: anchor.bottom + 4, width });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+
   if (!selected) return null;
 
   return (
-    <div className="relative">
+    <div ref={buttonRef}>
       <Button
         type="button"
         variant={open ? 'secondary' : 'ghost'}
@@ -32,8 +57,11 @@ export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
       </Button>
 
       {open ? (
-        <div className="absolute right-0 top-9 z-30 w-[min(34rem,calc(100vw-2rem))] rounded-md border border-input bg-popover p-2 text-popover-foreground shadow-xl shadow-black/50 lg:w-[min(34rem,calc(50vw-2rem))]">
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+        <div
+          style={popoverStyle}
+          className="fixed z-30 max-h-[calc(100vh-4rem)] overflow-y-auto rounded-md border border-input bg-popover p-2 text-popover-foreground shadow-xl shadow-black/50"
+        >
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,0.6fr)_minmax(0,1.4fr)]">
             <div className="grid content-start gap-0.5">
               {snippets.map((snippet) => (
                 <button
@@ -61,7 +89,10 @@ export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
                   <Button
                     type="button"
                     size="sm"
-                    onClick={() => onInsert(selected.usage)}
+                    onClick={() => {
+                      onInsert(selected.usage, selected.setup);
+                      setOpen(false);
+                    }}
                   >
                     <Braces />
                     Insert usage
@@ -69,88 +100,13 @@ export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
                 </div>
               </div>
 
-              <pre className="mt-3 max-h-64 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
-                <code>{highlightTypeScript(selected.implementation)}</code>
-              </pre>
+              <div className="mt-3">
+                <ToolboxVisual snippetId={selected.id} />
+              </div>
             </div>
           </div>
         </div>
       ) : null}
     </div>
   );
-}
-
-interface CodeToken {
-  value: string;
-  kind: 'comment' | 'keyword' | 'type' | 'string' | 'number' | 'operator' | 'plain';
-}
-
-const keywordSet = new Set([
-  'const',
-  'let',
-  'function',
-  'return',
-  'if',
-  'else',
-  'interface',
-  'type',
-  'extends',
-  'undefined',
-  'Number',
-  'Math',
-  'true',
-  'false',
-]);
-
-const tokenPattern =
-  /\/\/.*|(["'`])(?:\\.|(?!\1)[^\\])*\1|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|[{}()[\].,:;?+\-*/=<>&|!]+|\s+|./g;
-
-function highlightTypeScript(code: string): ReactNode[] {
-  return code.split('\n').flatMap((line, lineIndex, lines) => {
-    const nodes: ReactNode[] = tokenizeLine(line).map((token, tokenIndex) => (
-      <span key={`${lineIndex}-${tokenIndex}`} className={tokenClassName(token.kind)}>
-        {token.value}
-      </span>
-    ));
-
-    if (lineIndex < lines.length - 1) nodes.push('\n');
-    return nodes;
-  });
-}
-
-function tokenizeLine(line: string): CodeToken[] {
-  const trimmed = line.trimStart();
-  if (trimmed.startsWith('/**') || trimmed.startsWith('*') || trimmed.startsWith('*/')) {
-    return [{ value: line, kind: 'comment' }];
-  }
-
-  return [...line.matchAll(tokenPattern)].map((match) => {
-    const value = match[0];
-    if (value.startsWith('//')) return { value, kind: 'comment' };
-    if (/^["'`]/.test(value)) return { value, kind: 'string' };
-    if (/^\d/.test(value)) return { value, kind: 'number' };
-    if (/^[{}()[\].,:;?+\-*/=<>&|!]+$/.test(value)) return { value, kind: 'operator' };
-    if (keywordSet.has(value)) return { value, kind: 'keyword' };
-    if (/^[A-Z][A-Za-z0-9_]*$/.test(value)) return { value, kind: 'type' };
-    return { value, kind: 'plain' };
-  });
-}
-
-function tokenClassName(kind: CodeToken['kind']): string {
-  switch (kind) {
-    case 'comment':
-      return 'text-muted-foreground';
-    case 'keyword':
-      return 'text-[#89a9ff]';
-    case 'type':
-      return 'text-foreground';
-    case 'string':
-      return 'text-signal';
-    case 'number':
-      return 'text-warning';
-    case 'operator':
-      return 'text-muted-foreground';
-    default:
-      return 'text-foreground';
-  }
 }

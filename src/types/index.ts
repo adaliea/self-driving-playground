@@ -10,7 +10,6 @@ export type {
   PidDebugTerms,
   PlaygroundSettings,
   SanitizedAutopilotOutput,
-  VehicleDetection,
   VehicleMeasurement,
   VehicleMeasurementUncertainty,
   VehicleTrack,

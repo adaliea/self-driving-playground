@@ -233,7 +233,6 @@ export function formatToolboxInspection(
       lines.push(...formatPid(details));
       break;
     case 'analyzeLane':
-    case 'analyzeLaneRegression':
       lines.push(...formatLane(details));
       break;
     case 'closestVehicleAhead':
@@ -242,18 +241,16 @@ export function formatToolboxInspection(
     case 'adaptiveCruiseTargetSpeed':
       lines.push(...formatAdaptiveCruise(details));
       break;
-    case 'accelerationFeedforward':
+    case 'speedFeedforward':
       lines.push(...table([
         ['Target', speed(details.targetSpeed)],
-        ['Current', speed(details.currentSpeed)],
-        ['Error', speed(details.speedError)],
         ['Output', signed(details.output)],
       ]));
       break;
-    case 'curvatureSteeringFeedforward':
+    case 'steeringFeedforward':
       lines.push(...table([
+        ['Curvature', number(details.curvature, [], 5)],
         ['Speed', speed(details.speed)],
-        ['Curvature', number(details.lane, ['curvature'], 5)],
         ['Output', signed(details.output)],
       ]));
       break;

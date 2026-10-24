@@ -30,7 +30,8 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
   useEffect(() => {
     if (telemetry) setHistory((previous) => recordTelemetry(previous, inspection.version, telemetry, controllers));
   }, [telemetry, inspection.version, controllers]);
-  const speed = telemetry?.speedMph ?? 0;
+  const speed = telemetry?.speed ?? 0;
+  const speedMph = telemetry?.speedMph ?? 0;
 
   return (
     <aside className="relative z-10 max-h-[42vh] min-w-0 overflow-auto border-t border-border bg-background px-4 pb-4">
@@ -40,7 +41,7 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
       </div>
 
       <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-md border border-border bg-border sm:grid-cols-6">
-        <Metric label="Speed" value={speed.toFixed(1)} unit="mph" />
+        <Metric label="Speed" value={speed.toFixed(1)} unit="m/s" secondary={`${speedMph.toFixed(0)} mph`} />
         <Metric label="Lane" value={`${telemetry?.laneIndex ?? 0}`} />
         <Metric label="Motor cmd" value={formatSigned(telemetry?.finalMotor ?? 0)} assisted={telemetry?.motorOverridden} />
         <Metric label="Motor actual" value={formatSigned(telemetry?.actualMotor ?? 0)} />
@@ -74,7 +75,20 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
   );
 }
 
-function Metric({ label, value, unit, assisted = false }: { label: string; value: string; unit?: string; assisted?: boolean }) {
+function Metric({
+  label,
+  value,
+  unit,
+  secondary,
+  assisted = false,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  /** Small extra reading after the unit, such as the same value in other units. */
+  secondary?: string;
+  assisted?: boolean;
+}) {
   return (
     <div className="bg-background px-3 py-2">
       <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -84,6 +98,7 @@ function Metric({ label, value, unit, assisted = false }: { label: string; value
       <dd className={`mt-0.5 font-mono text-sm tabular-nums ${assisted ? 'text-signal' : 'text-foreground'}`}>
         {value}
         {unit ? <span className="ml-1 text-xs text-muted-foreground">{unit}</span> : null}
+        {secondary ? <span className="block font-sans text-[11px] leading-4 text-muted-foreground">{secondary}</span> : null}
       </dd>
     </div>
   );

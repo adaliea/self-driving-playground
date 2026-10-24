@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compileUserCode } from './compiler';
+import { runnerHelpers } from './runnerSource';
 
 interface ExecutedController {
   autopilot: (input: Record<string, unknown>) => unknown;
@@ -83,6 +84,7 @@ function execute(js: string): ExecutedController {
     `
       const exports = {};
       const module = { exports };
+      ${runnerHelpers()}
       ${js}
       return { autopilot: module.exports.autopilot || exports.autopilot };
     `,

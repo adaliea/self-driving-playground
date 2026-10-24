@@ -122,6 +122,12 @@ export function ControlPanel({
               onChange={(checked) => update('actuatorVariation', checked)}
             />
             <Toggle
+              label="Wind"
+              detail="Steady headwind or tailwind, plus gusts"
+              checked={settings.wind}
+              onChange={(checked) => update('wind', checked)}
+            />
+            <Toggle
               label="Debug overlays"
               checked={settings.debugOverlays}
               onChange={(checked) => update('debugOverlays', checked)}

@@ -22,6 +22,7 @@ export function applyVehiclePhysics(
   dt: number,
   rng: SeededRandom,
   actuatorVariation: boolean,
+  windAccel = 0,
 ): void {
   vehicle.commandMotor = output.motor;
   vehicle.commandSteering = output.steering;
@@ -42,7 +43,9 @@ export function applyVehiclePhysics(
       ? vehicle.actualMotor * MAX_FORWARD_ACCEL * (1 - speedRatio ** 1.65)
       : vehicle.actualMotor * MAX_BRAKE_ACCEL;
   const dragAccel = 0.00085 * vehicle.speed * vehicle.speed + 0.012 * vehicle.speed;
-  const accel = driveAccel - dragAccel;
+  // Fade wind in from standstill so a tailwind can't roll a stopped car.
+  const windDrag = windAccel * clamp(vehicle.speed / 5, 0, 1);
+  const accel = driveAccel - dragAccel - windDrag;
 
   vehicle.speed = Math.max(0, vehicle.speed + accel * dt);
 

@@ -49,7 +49,7 @@ describe('pre-race validation', () => {
 
   it('builds a driver worker module with the sandbox helpers', () => {
     const module = driverWorkerModule('exports.autopilot = () => ({ motor: 0, steering: 0 });');
-    expect(module).toContain('function analyzeLaneRegression');
+    expect(module).toContain('function analyzeLane');
     expect(module).toContain('export default class Driver');
   });
 

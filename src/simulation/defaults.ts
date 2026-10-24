@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS: PlaygroundSettings = {
   noisyLaneLines: true,
   noisyVehicles: true,
   actuatorVariation: true,
+  wind: true,
   debugOverlays: true,
   steerAssist: false,
   accelerateAssist: false,

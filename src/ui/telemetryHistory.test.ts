@@ -15,7 +15,7 @@ describe('shared telemetry recording', () => {
   it('captures speed, each actuation stage, and PID terms on one timeline', () => {
     const history = recordTelemetry(initial, 1, telemetry, controllers);
     expect(history.vehicle[0]).toMatchObject({ time: 1000, values: {
-      speed: 22.4, userMotor: 0.3, finalMotor: 0.5, actualMotor: 0.4,
+      speed: 10, userMotor: 0.3, finalMotor: 0.5, actualMotor: 0.4,
       userSteering: 0.1, finalSteering: 0.2, actualSteering: 0.15,
     } });
     expect(history.pids.position[0]).toEqual({ time: 1000, terms: controllers[0].terms });
@@ -31,7 +31,7 @@ describe('shared telemetry recording', () => {
   });
 
   it('records lead signals and leaves gaps when the lead is lost', () => {
-    const leadVehicle = { id: 'lead', speedMph: 35, relativeX: 0.2, relativeY: 12, relativeVx: 0.1, relativeVy: -2 };
+    const leadVehicle = { id: 'lead', speed: 35, relativeX: 0.2, relativeY: 12, relativeVx: 0.1, relativeVy: -2 };
     const history = recordTelemetry(initial, 1, { ...telemetry, leadVehicle }, controllers);
     expect(history.vehicle[0].values).toMatchObject({ leadSpeed: 35, leadRelativeY: 12, leadRelativeX: 0.2, leadRelativeVy: -2, leadRelativeVx: 0.1 });
     const lost = recordTelemetry(history, 1, { ...telemetry, time: 2 }, controllers);

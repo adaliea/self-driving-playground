@@ -13,9 +13,9 @@ const pidTerms: [PidSeries, string][] = [['error', 'Error'], ['proportional', 'P
 const graphColorblindColors = [cb.blue, cb.orange, cb.aqua, cb.yellow, cb.magenta, cb.green, cb.violet, cb.red];
 export function telemetrySignals(controllers: NamedPidTelemetry[], graphs: Record<string, string | undefined> = {}): TelemetrySignal[] {
   return [
-    { key: 'speed', label: 'Speed', group: 'Vehicle', axis: 'mph', color: colors[0], colorblindColor: cb.blue, pattern: 'solid' },
+    { key: 'speed', label: 'Speed (m/s)', group: 'Vehicle', axis: 'm/s', color: colors[0], colorblindColor: cb.blue, pattern: 'solid' },
     // Lead signals share the dash-dot pattern; lead speed reuses the speed hue so the two read as a pair.
-    { key: 'leadSpeed', label: 'Lead · estimated forward speed (mph)', group: 'Lead vehicle', axis: 'mph', color: '#fbbf24', colorblindColor: cb.blue, pattern: 'dashdot' },
+    { key: 'leadSpeed', label: 'Lead · estimated forward speed (m/s)', group: 'Lead vehicle', axis: 'm/s', color: '#fbbf24', colorblindColor: cb.blue, pattern: 'dashdot' },
     { key: 'leadRelativeY', label: 'Lead · distance ahead (m)', group: 'Lead vehicle', axis: 'm', color: '#34d399', colorblindColor: cb.violet, pattern: 'dashdot' },
     { key: 'leadRelativeX', label: 'Lead · lateral offset (m, +right)', group: 'Lead vehicle', axis: 'm', color: '#c4b5fd', colorblindColor: cb.magenta, pattern: 'dashdot' },
     { key: 'leadRelativeVy', label: 'Lead · relative forward velocity (m/s)', group: 'Lead vehicle', axis: 'm/s', color: '#fb7185', colorblindColor: cb.green, pattern: 'dashdot' },

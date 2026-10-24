@@ -19,7 +19,7 @@ export const controllerExamples: ControllerExample[] = [
   // I slowly removes persistent bias. Keep it small; too much I can wind up and cause slow weaving.
   ki: 0.004,
   // D damps fast changes so the car does not over-correct.
-  kd: 0.12,
+  kd: 0.2,
   outputMin: -1,
   outputMax: 1,
   integralMin: -2,
@@ -28,20 +28,21 @@ export const controllerExamples: ControllerExample[] = [
 
 const speedPid = createPidController({
   kp: 0.09,
-  ki: 0.004,
+  ki: 0.012,
   kd: 0.012,
   outputMin: -1,
   outputMax: 1,
-  integralMin: -4,
-  integralMax: 4,
+  integralMin: -14,
+  integralMax: 14,
 });
 
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   const lane = analyzeLane(input.laneLines);
-  const laneError = lane.centerOffset + lane.heading * 2.2;
+  // Heading says where the offset is heading next; weighting it looks ahead about 8 m.
+  const laneError = lane.centerOffset + lane.heading * 8;
   const steering = lanePid.update(laneError, input.dt);
   const targetSpeed = adaptiveCruiseTargetSpeed(input, 28);
-  const motor = accelerationFeedforward(targetSpeed, input.ego.speed) +
+  const motor = speedFeedforward(targetSpeed) +
     speedPid.update(targetSpeed - input.ego.speed, input.dt);
 
   return {
@@ -56,7 +57,7 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     description: 'Simple proportional steering. Good for showing steady-state error and oscillation.',
     code: `export function autopilot(input: AutopilotInput): AutopilotOutput {
   const lane = analyzeLane(input.laneLines);
-  const steering = lane.centerOffset * 0.28 + lane.heading * 0.85;
+  const steering = lane.centerOffset * 0.36 + lane.heading * 3;
 
   return {
     motor: 0.34,
@@ -67,7 +68,7 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   {
     id: 'pid-lane-speed',
     title: 'PID lane plus speed',
-    description: 'Lane PID plus a speed PID and feedforward term.',
+    description: 'Lane PID and speed PID, each with a feedforward term.',
     code: `const lanePid = createPidController({
   kp: 0.36,
   ki: 0.014,
@@ -84,16 +85,17 @@ const speedPid = createPidController({
   kd: 0.01,
   outputMin: -1,
   outputMax: 1,
-  integralMin: -4,
-  integralMax: 4,
+  integralMin: -14,
+  integralMax: 14,
 });
 
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   const lane = analyzeLane(input.laneLines);
-  const steering = lanePid.update(lane.centerOffset + lane.heading * 2.2, input.dt);
+  const steering = lanePid.update(lane.centerOffset + lane.heading * 4, input.dt) +
+    steeringFeedforward(lane.curvature, input.ego.speed);
   const targetSpeed = 28;
   const speedError = targetSpeed - input.ego.speed;
-  const motor = accelerationFeedforward(targetSpeed, input.ego.speed) + speedPid.update(speedError, input.dt);
+  const motor = speedFeedforward(targetSpeed) + speedPid.update(speedError, input.dt);
 
   return {
     motor: clamp(motor, -1, 1),
@@ -121,15 +123,16 @@ const speedPid = createPidController({
   kd: 0.018,
   outputMin: -1,
   outputMax: 1,
-  integralMin: -4,
-  integralMax: 4,
+  integralMin: -16,
+  integralMax: 16,
 });
 
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   const lane = analyzeLane(input.laneLines);
-  const steering = lanePid.update(lane.centerOffset + lane.heading * 2.1, input.dt);
+  const steering = lanePid.update(lane.centerOffset + lane.heading * 4, input.dt) +
+    steeringFeedforward(lane.curvature, input.ego.speed);
   const targetSpeed = adaptiveCruiseTargetSpeed(input, 30);
-  const motor = accelerationFeedforward(targetSpeed, input.ego.speed) +
+  const motor = speedFeedforward(targetSpeed) +
     speedPid.update(targetSpeed - input.ego.speed, input.dt);
 
   return {
@@ -158,7 +161,8 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
 
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   const lane = analyzeLane(input.laneLines);
-  const steering = lanePid.update(lane.centerOffset + lane.heading * 2.2, input.dt);
+  const steering = lanePid.update(lane.centerOffset + lane.heading * 4, input.dt) +
+    steeringFeedforward(lane.curvature, input.ego.speed);
 
   return {
     // This motor value is intentionally ignored when "Accelerate for me" is on.
@@ -181,13 +185,13 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   kd: 0.012,
   outputMin: -1,
   outputMax: 1,
-  integralMin: -4,
-  integralMax: 4,
+  integralMin: -14,
+  integralMax: 14,
 });
 
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   const targetSpeed = adaptiveCruiseTargetSpeed(input, 29);
-  const motor = accelerationFeedforward(targetSpeed, input.ego.speed) +
+  const motor = speedFeedforward(targetSpeed) +
     speedPid.update(targetSpeed - input.ego.speed, input.dt);
 
   return {
@@ -220,8 +224,8 @@ const speedPid = createPidController({
   kd: 0.012,
   outputMin: -1,
   outputMax: 1,
-  integralMin: -4,
-  integralMax: 4,
+  integralMin: -14,
+  integralMax: 14,
 });
 
 export function autopilot(input: AutopilotInput): AutopilotOutput {
@@ -229,14 +233,14 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   const relativeLane = laneChooser.update(input);
 
   // Steer toward the chosen lane's center. Limiting the error keeps the lane change gentle.
-  const lane = analyzeLaneRegression(input.laneLines, relativeLane);
-  const laneError = clamp(lane.centerOffset, -1.2, 1.2) + lane.heading * 2.2;
+  const lane = analyzeLane(input.laneLines, relativeLane);
+  const laneError = clamp(lane.centerOffset, -1.2, 1.2) + lane.heading * 4;
   const steering = lanePid.update(laneError, input.dt) +
-    curvatureSteeringFeedforward(lane, input.ego.speed);
+    steeringFeedforward(lane.curvature, input.ego.speed);
 
   // Watch the lane being entered as well as the current one.
   const targetSpeed = adaptiveCruiseTargetSpeed(input, 29, relativeLane);
-  const motor = accelerationFeedforward(targetSpeed, input.ego.speed) +
+  const motor = speedFeedforward(targetSpeed) +
     speedPid.update(targetSpeed - input.ego.speed, input.dt);
 
   return {

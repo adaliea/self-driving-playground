@@ -5,7 +5,8 @@ import sandboxHtml from '../../public/sandbox.html?raw';
 const HELPERS_START = '/* runner-helpers:start';
 const HELPERS_END = '/* runner-helpers:end */';
 
-function runnerHelpers(): string {
+/** Runtime helpers available to user code, such as analyzeLane, as JavaScript source. */
+export function runnerHelpers(): string {
   const start = sandboxHtml.indexOf(HELPERS_START);
   const end = sandboxHtml.indexOf(HELPERS_END, start);
   if (start < 0 || end < 0) throw new Error('sandbox.html is missing its runner-helpers markers.');

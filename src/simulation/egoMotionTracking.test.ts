@@ -1,6 +1,4 @@
-import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { clampImplementation, vehicleTrackerImplementation } from '../toolbox/library';
 import type { EgoState, VehicleMeasurement, VehicleTrack } from '../types';
 import { normalizeAngle } from './math';
 import { SeededRandom } from './random';
@@ -146,31 +144,6 @@ function builtInTrackers(): Record<string, TrackerUpdate> {
   };
 }
 
-interface ToolboxTracker {
-  update(measurements: VehicleMeasurement[], dt: number, ego?: EgoState): VehicleTrack[];
-}
-
-/** Compiles the exact toolbox source users get, so the test covers the shipped string. */
-function loadToolboxTracker(): () => ToolboxTracker {
-  const source = `${clampImplementation}\n${vehicleTrackerImplementation}\nexport { createVehicleTracker };`;
-  const js = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-  }).outputText;
-  const exports: Record<string, unknown> = {};
-  new Function('exports', js)(exports);
-  return exports.createVehicleTracker as () => ToolboxTracker;
-}
-
-function toolboxTrackers(): Record<string, TrackerUpdate> {
-  const create = loadToolboxTracker();
-  const legacy = create();
-  const compensated = create();
-  return {
-    legacy: (measurements, dt) => legacy.update(measurements, dt),
-    compensated: (measurements, dt, ego) => compensated.update(measurements, dt, ego),
-  };
-}
-
 /** Target on a concentric arc around the same turn center as ego (positive yaw rate turns right). */
 function arcTarget(id: string, ego: Pose, yawRate: number, lateral: number, ahead: number, speed: number): Target {
   const radius = ego.speed / yawRate;
@@ -229,7 +202,6 @@ function format(stats: ErrorStats): string {
 
 describe.each([
   ['built-in VehicleTracker', builtInTrackers],
-  ['toolbox createVehicleTracker', toolboxTrackers],
 ])('%s ego-motion compensation', (trackerName, makeTrackers) => {
   it.each(Object.keys(scenarios))('tracks targets through a %s', (scenarioName) => {
     const result = runScenario(scenarios[scenarioName], makeTrackers());
@@ -247,8 +219,7 @@ describe.each([
 describe('ego-motion compensation invariants', () => {
   it.each([
     ['built-in VehicleTracker', builtInTrackers],
-    ['toolbox createVehicleTracker', toolboxTrackers],
-  ])('%s is unaffected by ego accelerating and braking hard', (_, makeTrackers) => {
+    ])('%s is unaffected by ego accelerating and braking hard', (_, makeTrackers) => {
     const straight = (egoAccel: (t: number) => number): Scenario => ({
       duration: 4.5, ego: { ...egoStart, speed: 25 }, egoYawRate: () => 0, egoAccel,
       egoRoadHeading: (ego) => ego.heading,

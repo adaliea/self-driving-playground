@@ -5,7 +5,7 @@ import type {
   LaneLineDetections,
   LaneLineSample,
   SanitizedAutopilotOutput,
-  VehicleDetection,
+  VehicleTrack,
 } from '../types';
 import { clamp, finiteOr } from './math';
 import { DEFAULT_TRAFFIC_PERSONALITY } from './personalities';
@@ -264,11 +264,11 @@ function analyzeLaneBoundaries(leftSamples: LaneLineSample[], rightSamples: Lane
 }
 
 export function closestVehicleAhead(
-  vehicles: VehicleDetection[],
+  vehicles: VehicleTrack[],
   laneLines: LaneLineDetections,
   relativeLane = 0,
-): VehicleDetection | undefined {
-  let closest: VehicleDetection | undefined;
+): VehicleTrack | undefined {
+  let closest: VehicleTrack | undefined;
   for (const vehicle of vehicles) {
     // The lane test is the costly part, so skip anything that couldn't be closer.
     if (vehicle.relativeY <= 0 || (closest && vehicle.relativeY >= closest.relativeY)) continue;
@@ -281,7 +281,7 @@ export function closestVehicleAhead(
  * True when any part of the vehicle's footprint overlaps the lane `relativeLane`
  * lanes to the right of ego's lane (-1 left, 0 ego's lane, 1 right).
  */
-export function isVehicleInLane(vehicle: VehicleDetection, laneLines: LaneLineDetections, relativeLane = 0): boolean {
+export function isVehicleInLane(vehicle: VehicleTrack, laneLines: LaneLineDetections, relativeLane = 0): boolean {
   const y = vehicle.relativeY;
   const left = laneBoundaryXAtY(laneLines, relativeLane, y);
   const right = laneBoundaryXAtY(laneLines, relativeLane + 1, y);

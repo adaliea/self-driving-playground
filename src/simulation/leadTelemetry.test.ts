@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from './simulation';
 import { DEFAULT_SETTINGS } from './defaults';
-import { metersPerSecondToMph } from './math';
 import type { VehicleTrack } from '../types';
 
 const track = (id: string, relativeX: number, relativeY: number): VehicleTrack => ({
@@ -15,7 +14,7 @@ describe('lead vehicle telemetry', () => {
     input.ego.speed = 20;
     input.vehicles = [track('other-lane', 3.9, 2), track('behind', 0.2, -4), track('far', 0.2, 40), track('lead', 0.2, 10)];
     expect(simulation.getSnapshot(DEFAULT_SETTINGS).telemetry.leadVehicle).toEqual({
-      id: 'lead', speedMph: metersPerSecondToMph(17), relativeX: 0.2,
+      id: 'lead', speed: 17, relativeX: 0.2,
       relativeY: 10, relativeVx: 0.1, relativeVy: -3,
     });
     input.vehicles = [];

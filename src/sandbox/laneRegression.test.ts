@@ -2,18 +2,18 @@ import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 import sandboxHtml from '../../public/sandbox.html?raw';
 import { analyzeLaneDetectionsForTarget } from '../simulation/controllers';
-import { clampImplementation, curveRegressionImplementation } from '../toolbox/library';
+import { clampImplementation } from '../toolbox/library';
 import type { LaneAnalysis, LaneLineDetections } from '../types';
 
 // Execute the helper source shipped to the sandbox, including the toolbox wrapper.
 const helperStart = sandboxHtml.indexOf('const __clamp =');
 const helperEnd = sandboxHtml.indexOf('${code}', helperStart);
-const toolbox = ts.transpileModule(clampImplementation + curveRegressionImplementation, {
+const toolbox = ts.transpileModule(clampImplementation, {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText;
 const { regression } = new Function(
   sandboxHtml.slice(helperStart, helperEnd) + toolbox +
-  '\nreturn { regression: analyzeLaneRegression };',
+  '\nreturn { regression: analyzeLane };',
 )() as {
   regression: (lines: LaneLineDetections, relativeLane?: number, mode?: 'local' | 'preview') => LaneAnalysis;
 };

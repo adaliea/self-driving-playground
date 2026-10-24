@@ -26,8 +26,8 @@ export function recordTelemetry(previous: TelemetryHistory, version: number | un
     graphValues[graphSignalKey(name)] = value;
   }
   const values = {
-    speed: telemetry.speedMph,
-    leadSpeed: telemetry.leadVehicle?.speedMph,
+    speed: telemetry.speed,
+    leadSpeed: telemetry.leadVehicle?.speed,
     leadRelativeX: telemetry.leadVehicle?.relativeX,
     leadRelativeY: telemetry.leadVehicle?.relativeY,
     leadRelativeVx: telemetry.leadVehicle?.relativeVx,

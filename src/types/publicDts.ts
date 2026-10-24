@@ -142,9 +142,6 @@ interface VehicleTrack {
   uncertainty: VehicleTrackUncertainty;
 }
 
-/** @deprecated Prefer VehicleTrack in new controller code. */
-type VehicleDetection = VehicleTrack;
-
 interface LaneLineSample {
   /** Lateral position relative to ego, in meters. */
   x: number;
@@ -182,7 +179,7 @@ interface LaneLineDetections {
 }
 
 /**
- * Interpreted lane geometry returned by analyzeLaneRegression.
+ * Interpreted lane geometry returned by analyzeLane.
  */
 interface LaneAnalysis {
   /**
@@ -255,16 +252,18 @@ interface AutopilotDebug {
 }
 
 /**
- * Built-in lane interpretation helper available to user code.
+ * Reads the lane from the detected lane lines.
  *
- * By default, it fits a weighted quadratic through the nearest 3–21 meters
- * and estimates center offset, heading, and curvature at ego for steering.
+ * By default, it fits a smooth curve through the nearest 3–21 meters of lane
+ * samples and estimates center offset, heading, and curvature at ego for
+ * steering. Steer on centerOffset and heading; pass curvature to
+ * steeringFeedforward to start turning into curves.
  * Pass 'preview' as the third argument for the original longer forward fit
  * (5–56 meters), useful for speed planning. Pass -1 or 1 as relativeTargetLane
  * to analyze an adjacent lane, for example the lane returned by a lane chooser
  * during a lane change.
  */
-declare function analyzeLaneRegression(
+declare function analyzeLane(
   /** Lane-line samples around the ego lane. */
   laneLines: LaneLineDetections,
   /**

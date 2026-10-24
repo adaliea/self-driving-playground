@@ -1,23 +1,36 @@
-import {
-  accelerationFeedforwardImplementation,
-  adaptiveCruiseImplementation,
-  clampImplementation,
-  curveRegressionImplementation,
-  laneInterpretationImplementation,
-  laneSelectionImplementation,
-  pidControllerImplementation,
-  vehicleFilteringImplementation,
-  vehicleTrackerImplementation,
-} from './library';
-
 export interface ToolboxSnippet {
   id: string;
   title: string;
   category: string;
   description: string;
-  implementation: string;
+  /**
+   * Declarations that must live outside autopilot(input) so they keep their state
+   * between ticks. Each is added above autopilot unless its name is already declared.
+   */
+  setup?: string[];
+  /** Lines to insert at the cursor, usually inside autopilot(input). */
   usage: string;
 }
+
+const lanePidSetup = `const lanePid = createPidController({
+  kp: 0.36,
+  ki: 0.015,
+  kd: 0.11,
+  outputMin: -1,
+  outputMax: 1,
+  integralMin: -2,
+  integralMax: 2,
+});`;
+
+const speedPidSetup = `const speedPid = createPidController({
+  kp: 0.09,
+  ki: 0.012,
+  kd: 0.012,
+  outputMin: -1,
+  outputMax: 1,
+  integralMin: -14,
+  integralMax: 14,
+});`;
 
 export const toolboxSnippets: ToolboxSnippet[] = [
   {
@@ -25,32 +38,14 @@ export const toolboxSnippets: ToolboxSnippet[] = [
     title: 'Clamp Helper',
     category: 'Safety',
     description: 'Keeps motor and steering commands inside the valid [-1, 1] range.',
-    implementation: clampImplementation,
     usage: `const safeSteering = clamp(steering, -1, 1);
 const safeMotor = clamp(motor, -1, 1);`,
-  },
-  {
-    id: 'vehicle-tracker',
-    title: 'Kalman Vehicle Tracker',
-    category: 'Estimation',
-    description: 'Builds stable constant-velocity tracks from intermittent raw vehicle measurements, compensating for ego turns.',
-    implementation: vehicleTrackerImplementation,
-    usage: `const tracker = createVehicleTracker();
-
-export function autopilot(input: AutopilotInput): AutopilotOutput {
-  // Passing input.ego lets prediction undo ego turns and speed changes.
-  const myTracks = tracker.update(input.vehicleMeasurements, input.dt, input.ego);
-  const lead = closestVehicleAhead(myTracks, input.laneLines);
-  // Compare myTracks with the built-in input.vehicles tracks.
-  return { motor: lead && lead.relativeY < 25 ? -0.2 : 0.3, steering: 0 };
-}`,
   },
   {
     id: 'vehicle-filtering',
     title: 'Vehicle Filtering',
     category: 'Perception',
     description: 'Find vehicles whose bounding box overlaps a lane and pick the closest one ahead for following-distance control.',
-    implementation: vehicleFilteringImplementation,
     usage: `const leadVehicle = closestVehicleAhead(input.vehicles, input.laneLines);
 const gapMeters = leadVehicle?.relativeY ?? Number.POSITIVE_INFINITY;`,
   },
@@ -59,73 +54,58 @@ const gapMeters = leadVehicle?.relativeY ?? Number.POSITIVE_INFINITY;`,
     title: 'PID Controller Object',
     category: 'Control',
     description: 'A stateful PID controller with integral limiting, output limiting, reset, and automatic PID telemetry.',
-    implementation: pidControllerImplementation,
-    usage: `const lanePid = createPidController({
-  kp: 0.36,
-  ki: 0.015,
-  kd: 0.11,
-  outputMin: -1,
-  outputMax: 1,
-  integralMin: -2,
-  integralMax: 2,
-});
-
-const steering = lanePid.update(laneError, input.dt);`,
+    setup: [lanePidSetup],
+    usage: `const steering = lanePid.update(laneError, input.dt);`,
   },
   {
     id: 'analyze-lane',
-    title: 'Lane Interpretation',
+    title: 'Lane Reading',
     category: 'Perception',
-    description: 'Turns raw lane-line samples into center offset, heading, curvature, and confidence.',
-    implementation: laneInterpretationImplementation,
+    description: 'Fits a smooth curve through the noisy lane-line samples and reports how far you are from the lane center, your angle to it, and how the road bends.',
     usage: `const lane = analyzeLane(input.laneLines);
-const laneError = lane.centerOffset + lane.heading * 2.5;`,
+const laneError = lane.centerOffset + lane.heading * 4;`,
   },
   {
-    id: 'feedforward',
-    title: 'Acceleration Feedforward',
+    id: 'speed-feedforward',
+    title: 'Speed Feedforward',
     category: 'Control',
-    description: 'Adds a rough motor estimate for nonlinear acceleration and drag before PID feedback.',
-    implementation: accelerationFeedforwardImplementation,
+    description: 'Estimates the motor needed to hold a target speed against drag, so the PID only has to correct what the estimate gets wrong.',
+    setup: [speedPidSetup],
     usage: `const targetSpeed = 28;
-const motor = accelerationFeedforward(targetSpeed, input.ego.speed);`,
+const motor = speedFeedforward(targetSpeed) +
+  speedPid.update(targetSpeed - input.ego.speed, input.dt);`,
   },
   {
-    id: 'curve-regression',
-    title: 'Curve Regression Helper',
-    category: 'Perception',
-    description:
-      'Estimates local lane geometry for steering; supports a longer preview for speed planning.',
-    implementation: curveRegressionImplementation,
-    usage: `const lane = analyzeLaneRegression(input.laneLines);
-const laneError = lane.centerOffset + lane.heading * 2.0;
-const feedback = lanePid.update(laneError, input.dt);
-const feedforward = curvatureSteeringFeedforward(lane, input.ego.speed);
-const steering = clamp(feedback + feedforward, -1, 1);`,
+    id: 'steering-feedforward',
+    title: 'Steering Feedforward',
+    category: 'Control',
+    description: 'Estimates the steering needed to follow the curve ahead, so the lane PID only has to correct the drift.',
+    setup: [lanePidSetup],
+    usage: `const lane = analyzeLane(input.laneLines);
+const laneError = lane.centerOffset + lane.heading * 4;
+const steering = steeringFeedforward(lane.curvature, input.ego.speed) +
+  lanePid.update(laneError, input.dt);`,
   },
   {
     id: 'adaptive-cruise',
     title: 'Adaptive Cruise Snippet',
     category: 'Following',
     description: 'Reduces target speed when the closest vehicle ahead is inside the desired following gap.',
-    implementation: adaptiveCruiseImplementation,
+    setup: [speedPidSetup],
     usage: `const targetSpeed = adaptiveCruiseTargetSpeed(input, 29);
-const motor = speedPid.update(targetSpeed - input.ego.speed, input.dt);`,
+const motor = speedFeedforward(targetSpeed) +
+  speedPid.update(targetSpeed - input.ego.speed, input.dt);`,
   },
   {
     id: 'fastest-lane',
     title: 'Fastest Lane Selection',
     category: 'Planning',
     description: 'Picks an adjacent lane whose traffic is faster by at least a minimum speed differential, and holds it until the lane change finishes.',
-    implementation: laneSelectionImplementation,
-    usage: `// Only switch when the other lane is at least 3 m/s faster.
-const laneChooser = createLaneChooser({ minSpeedGain: 3 });
-
-export function autopilot(input: AutopilotInput): AutopilotOutput {
-  const relativeLane = laneChooser.update(input);
-  const lane = analyzeLaneRegression(input.laneLines, relativeLane);
-  const targetSpeed = adaptiveCruiseTargetSpeed(input, 29, relativeLane);
-  // ...steer on lane.centerOffset and lane.heading as usual.
-}`,
+    setup: [`// Only switch when the other lane is at least 3 m/s faster.
+const laneChooser = createLaneChooser({ minSpeedGain: 3 });`],
+    usage: `const relativeLane = laneChooser.update(input);
+const lane = analyzeLane(input.laneLines, relativeLane);
+const targetSpeed = adaptiveCruiseTargetSpeed(input, 29, relativeLane);
+// ...steer on lane.centerOffset and lane.heading as usual.`,
   },
 ];

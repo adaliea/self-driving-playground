@@ -62,7 +62,8 @@ export interface RenderCamera {
 
 export interface LeadVehicleTelemetry {
   id: string;
-  speedMph: number;
+  /** Estimated forward speed in m/s. */
+  speed: number;
   relativeX: number;
   relativeY: number;
   relativeVx: number;
