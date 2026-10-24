@@ -84,6 +84,12 @@ export interface EgoState {
   heading: number;
 
   /**
+   * Sideways speed across the road in meters per second (positive is moving right).
+   * Equal to speed * sin(heading).
+   */
+  lateralVelocity: number;
+
+  /**
    * Ego world yaw rate over the latest tick, in radians per second. Same sign as
    * heading (positive turns right). Unlike heading, this includes road curvature:
    * it is how fast the ego-relative frame of vehicles and lane lines rotates.

@@ -1,9 +1,11 @@
 import { CheckCircle2, Flag, Loader2, LogOut, Send, ShieldCheck, Trophy, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import App, { type AppTopBarContext } from '../App';
+import { starterExample } from '../toolbox';
 import { Button } from '../ui/Button';
 import { RoomConnection, joinRoom, readStoredJson, roomSocketUrl, writeStoredJson, type ConnectionStatus } from './connection';
 import {
+  DEFAULT_PRESENTATION,
   MAX_PLAYER_NAME_LENGTH,
   ROOM_CODE_LENGTH,
   isValidRoomCode,
@@ -12,6 +14,7 @@ import {
   type JoinRoomResponse,
   type LeaderboardEntry,
   type PlayerToServerMessage,
+  type PresentationState,
   type RoundState,
   type ServerToPlayerMessage,
   type ValidationReport,
@@ -21,6 +24,9 @@ import { RACE_SCORING } from './scoring';
 import { VALIDATION_RULES, kmh, percent } from './validation';
 
 const PLAYER_NAME_KEY = 'self-driving-playground:player-name:v1';
+/** Race rooms keep their own code and settings, separate from the solo playground. */
+const ROOM_STORAGE_NAMESPACE = 'room:';
+const ROOM_EXAMPLES = [starterExample];
 const playerSessionKey = (roomCode: string) => `self-driving-playground:player-session:${roomCode}:v1`;
 
 interface PlayerSession extends JoinRoomResponse {
@@ -129,8 +135,8 @@ function JoinForm({
         <Button type="submit" disabled={!valid || joining}>
           {joining ? 'Joining…' : 'Join'}
         </Button>
-        <a href="/" className="text-center text-xs text-muted-foreground underline-offset-4 hover:underline">
-          Back to solo playground
+        <a href="/playground" className="text-center text-xs text-muted-foreground underline-offset-4 hover:underline">
+          Practice on your own instead
         </a>
       </form>
     </div>
@@ -147,6 +153,7 @@ interface RoomState {
   connection: ConnectionStatus;
   round: RoundState;
   leaderboard: LeaderboardEntry[];
+  presentation: PresentationState;
   submittedVersion?: number;
   submittedSource?: string;
   /** Latest presenter status for each submitted version. */
@@ -160,6 +167,7 @@ function PlayerRoom({ session, onLeave }: { session: PlayerSession; onLeave: () 
     connection: 'connecting',
     round: { phase: 'lobby', round: 0 },
     leaderboard: [],
+    presentation: DEFAULT_PRESENTATION,
     statusByVersion: {},
   });
   const connectionRef = useRef<RoomConnection<ServerToPlayerMessage, PlayerToServerMessage>>();
@@ -173,6 +181,7 @@ function PlayerRoom({ session, onLeave }: { session: PlayerSession; onLeave: () 
             return {
               ...current,
               round: message.round,
+              presentation: message.presentation ?? current.presentation,
               submittedVersion: message.version ?? current.submittedVersion,
               validation: message.validating
                 ? { phase: 'validating', queuedBehind: 0, source: pendingSourceRef.current }
@@ -204,6 +213,8 @@ function PlayerRoom({ session, onLeave }: { session: PlayerSession; onLeave: () 
             };
           case 'round-state':
             return { ...current, round: message.state };
+          case 'presentation':
+            return { ...current, presentation: message.state };
           case 'leaderboard':
             return { ...current, leaderboard: message.entries };
           case 'driver-status':
@@ -236,7 +247,14 @@ function PlayerRoom({ session, onLeave }: { session: PlayerSession; onLeave: () 
     [session, state, submit, onLeave],
   );
 
-  return <App renderTopBar={renderTopBar} />;
+  return (
+    <App
+      renderTopBar={renderTopBar}
+      examples={ROOM_EXAMPLES}
+      storageNamespace={ROOM_STORAGE_NAMESPACE}
+      lockedHelpers={state.presentation.lockedHelpers}
+    />
+  );
 }
 
 function RaceBar({

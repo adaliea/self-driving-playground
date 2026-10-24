@@ -93,7 +93,7 @@ function runScenario(scenario: Scenario, updates: Record<string, TrackerUpdate>,
   for (let t = 0; t < scenario.duration; t += DT) {
     advance(ego, scenario.egoYawRate(t), scenario.egoAccel?.(t) ?? 0);
     for (const target of targets) advance(target, target.yawRate, 0);
-    const egoInput: EgoState = { speed: ego.speed, heading: scenario.egoRoadHeading(ego), yawRate: (ego.heading - previousHeading) / DT, laneIndex: 1 };
+    const egoInput: EgoState = { speed: ego.speed, heading: scenario.egoRoadHeading(ego), lateralVelocity: 0, yawRate: (ego.heading - previousHeading) / DT, laneIndex: 1 };
     previousHeading = ego.heading;
 
     const truths = targets.map((target) => relativeTruth(ego, target));

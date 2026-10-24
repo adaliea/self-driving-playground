@@ -78,6 +78,7 @@ export class SensorSimulator {
     const ego = {
       speed: subject.speed,
       heading: subject.headingOffset,
+      lateralVelocity: subject.speed * Math.sin(subject.headingOffset),
       yawRate: this.measureYawRate(subject, road, dt),
       laneIndex,
     };
@@ -114,6 +115,7 @@ export class SensorSimulator {
       ego: {
         speed: subject.speed,
         heading: subject.headingOffset,
+        lateralVelocity: subject.speed * Math.sin(subject.headingOffset),
         yawRate: this.measureYawRate(subject, road, dt),
         laneIndex,
       },

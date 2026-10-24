@@ -254,6 +254,13 @@ export function formatToolboxInspection(
         ['Output', signed(details.output)],
       ]));
       break;
+    case 'lateralVelocitySteering':
+      lines.push(...table([
+        ['Target sideways', speed(details.targetLateralVelocity)],
+        ['Actual sideways', speed(details.lateralVelocity)],
+        ['Steering', signed(details.output)],
+      ]));
+      break;
     case 'clamp':
       lines.push(...table([
         ['Input', number(details.input)],

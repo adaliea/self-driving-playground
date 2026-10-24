@@ -27,7 +27,8 @@ export function applyVehiclePhysics(
   vehicle.commandMotor = output.motor;
   vehicle.commandSteering = output.steering;
 
-  const motorNoise = actuatorVariation ? rng.range(-0.035, 0.035) : 0;
+  // Throttle and brake err in proportion to how hard they are working, so coasting is exact.
+  const motorNoise = actuatorVariation ? output.motor * rng.range(-0.035, 0.035) : 0;
   const steeringNoise = actuatorVariation ? rng.range(-0.025, 0.025) : 0;
   const desiredMotor = clamp(output.motor + motorNoise, -1, 1);
   const desiredSteering = clamp(output.steering + steeringNoise, -1, 1);

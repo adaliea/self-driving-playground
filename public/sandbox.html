@@ -218,6 +218,10 @@
                     return { targetSpeed: args[0], output: result };
                   case 'steeringFeedforward':
                     return { curvature: args[0], speed: args[1], output: result };
+                  case 'lateralVelocitySteering': {
+                    const ego = (args[0] && args[0].ego) || {};
+                    return { targetLateralVelocity: args[1], lateralVelocity: ego.lateralVelocity, output: result };
+                  }
                   case 'clamp':
                     return {
                       input: args[0], min: args[1], max: args[2], output: result,

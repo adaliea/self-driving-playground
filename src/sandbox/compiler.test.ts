@@ -70,6 +70,26 @@ export function autopilot(): AutopilotOutput {
     expect(result.inspection.toolboxCalls).toEqual([]);
     expect((execute(result.js).autopilot({}) as { motor: number }).motor).toBe(0.5);
   });
+
+  it('warns when a PID controller is created inside a function, where it resets every tick', () => {
+    const inside = compileUserCode(`
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  const pid = createPidController({ kp: 1, ki: 0, kd: 0 });
+  return { motor: pid.update(1, input.dt), steering: 0 };
+}`);
+    expect(inside.ok).toBe(true);
+    expect(inside.warnings).toHaveLength(1);
+    expect(inside.warnings[0].message).toContain('every time the function runs');
+    const source = 'createPidController({ kp: 1, ki: 0, kd: 0 })';
+    expect(inside.warnings[0]).toMatchObject({ length: source.length });
+
+    const outside = compileUserCode(`
+const pid = createPidController({ kp: 1, ki: 0, kd: 0 });
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  return { motor: pid.update(1, input.dt), steering: 0 };
+}`);
+    expect(outside.warnings).toEqual([]);
+  });
 });
 
 function execute(js: string): ExecutedController {

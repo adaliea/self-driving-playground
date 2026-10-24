@@ -7,6 +7,7 @@ export const TOOLBOX_INSPECTORS = [
   'adaptiveCruiseTargetSpeed',
   'speedFeedforward',
   'steeringFeedforward',
+  'lateralVelocitySteering',
   'clamp',
 ] as const;
 

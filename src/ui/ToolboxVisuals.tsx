@@ -608,6 +608,76 @@ function drawSteeringFeedforward(t: number): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
+// Lateral velocity steering
+
+interface LateralSample {
+  offset: number;
+  target: number;
+  actual: number;
+}
+
+const LATERAL_DT = 1 / 60;
+const LATERAL_CYCLE = 5;
+
+/** The car starts off-center, alternating sides each loop, and a P loop sets the sideways speed. */
+const lateralSamples: LateralSample[] = (() => {
+  const samples: LateralSample[] = [];
+  const steps = Math.round(LATERAL_CYCLE / LATERAL_DT);
+  for (const side of [1, -1]) {
+    let offset = 1.3 * side;
+    let actual = 0;
+    for (let step = 0; step < steps; step += 1) {
+      const target = clampNumber(-1 * offset, -1.5, 1.5);
+      actual += (target - actual) * (LATERAL_DT / 0.35);
+      offset += actual * LATERAL_DT;
+      samples.push({ offset, target, actual });
+    }
+  }
+  return samples;
+})();
+
+function drawLateralVelocity(t: number): ReactNode {
+  const sample = lateralSamples[Math.floor(mod(t, LATERAL_CYCLE * 2) / LATERAL_DT) % lateralSamples.length];
+  const scale = 12;
+  const laneWidth = 3.7 * scale;
+  const top = 40;
+  const laneCenter = top + laneWidth * 1.5;
+  const egoX = 90;
+  const egoY = laneCenter + sample.offset * scale;
+  const arrowScale = 34;
+  const arrow = (velocity: number, color: string, x: number) => {
+    const end = egoY + velocity * arrowScale;
+    const direction = Math.sign(velocity) || 1;
+    return (
+      <g>
+        <line x1={x} x2={x} y1={egoY} y2={end} stroke={color} strokeWidth={2} />
+        {Math.abs(velocity) > 0.05 ? (
+          <path d={`M${x - 4},${end - direction * 5} L${x},${end} L${x + 4},${end - direction * 5}`} fill="none" stroke={color} strokeWidth={2} />
+        ) : null}
+      </g>
+    );
+  };
+
+  return (
+    <g>
+      <StraightRoad top={top} laneWidth={laneWidth} lanes={3} scroll={t * 22 * 3} />
+      <line x1={0} x2={W} y1={laneCenter} y2={laneCenter} stroke={COLOR.warning} strokeWidth={1} strokeDasharray="3 4" opacity={0.7} />
+      <Car x={egoX} y={egoY} length={4.6 * scale} width={1.9 * scale} heading={Math.atan2(sample.actual, 25)} color={COLOR.signal} />
+      {arrow(sample.target, COLOR.warning, egoX + 44)}
+      {arrow(sample.actual, COLOR.signal, egoX + 56)}
+
+      <Text x={10} y={150} color={COLOR.foreground}>centerOffset</Text>
+      <Text x={10} y={162}>{`${(-sample.offset >= 0 ? '+' : '')}${(-sample.offset).toFixed(2)} m`}</Text>
+      <Text x={104} y={150} color={COLOR.foreground}>target sideways</Text>
+      <Text x={104} y={162} color={COLOR.warning}>{`${sample.target >= 0 ? '+' : ''}${sample.target.toFixed(2)} m/s`}</Text>
+      <Text x={212} y={150} color={COLOR.foreground}>actual sideways</Text>
+      <Text x={212} y={162} color={COLOR.signal}>{`${sample.actual >= 0 ? '+' : ''}${sample.actual.toFixed(2)} m/s`}</Text>
+      <Text x={10} y={174}>You pick the sideways speed; the helper steers to hold it.</Text>
+    </g>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Adaptive cruise
 
 interface CruiseSample {
@@ -794,6 +864,12 @@ const visuals: Record<string, VisualDefinition> = {
     caption: 'Following a curve needs turning at curvature × speed. Feedforward steers for the curve; the lane PID only fixes the drift.',
     stillAt: 4.5,
     draw: drawSteeringFeedforward,
+  },
+  'lateral-velocity': {
+    label: 'A car off the lane center slides back toward it, with arrows for the target and actual sideways speed.',
+    caption: 'Your outer loop turns distance from the center into a target sideways speed. This helper is the inner loop that steers to hold that speed.',
+    stillAt: 0.8,
+    draw: drawLateralVelocity,
   },
   'adaptive-cruise': {
     label: 'Your car following a lead car that speeds up and slows down, with the target gap shaded.',

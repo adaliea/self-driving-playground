@@ -64,8 +64,10 @@ interface AutopilotInput {
 interface EgoState {
   /** Current forward speed in meters per second. */
   speed: number;
-  /** Ego heading relative to the road/world frame, in radians. */
+  /** Ego heading relative to the road/world frame, in radians. Positive points right. */
   heading: number;
+  /** Sideways speed across the road in meters per second (positive is moving right). Equal to speed * sin(heading). */
+  lateralVelocity: number;
   /** Ego world yaw rate in radians per second (positive turns right), including road curvature. */
   yawRate: number;
   /** Current lane index. For a 3-lane road, valid values are 0, 1, and 2. */

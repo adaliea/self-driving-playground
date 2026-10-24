@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { CARTOON_FONT, CartoonRenderer, type CartoonPlayerLabel } from '../rendering';
 import { RoomConnection, createRoom, readStoredJson, roomSocketUrl, writeStoredJson, type ConnectionStatus } from './connection';
-import type { CreateRoomResponse, HostToServerMessage, LeaderboardEntry, RoundPhase, ServerToHostMessage } from './protocol';
+import { toolboxSnippets } from '../toolbox/snippets';
+import {
+  DEFAULT_PRESENTATION,
+  type CreateRoomResponse,
+  type HostToServerMessage,
+  type LeaderboardEntry,
+  type PresentationState,
+  type RoundPhase,
+  type ServerToHostMessage,
+} from './protocol';
 import { RaceEngine, type DriverView, type LiveStanding, type RaceConfig } from './RaceEngine';
 import { RACE_SCORING } from './scoring';
 
@@ -51,6 +60,7 @@ export function HostView() {
   const [ui, setUi] = useState<HostUiState>(initialUi);
   const [config, setConfig] = useState<RaceConfig>();
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [presentation, setPresentation] = useState<PresentationState>(DEFAULT_PRESENTATION);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<RaceEngine>();
   const connectionRef = useRef<RoomConnection<ServerToHostMessage, HostToServerMessage>>();
@@ -89,6 +99,7 @@ export function HostView() {
     const handleMessage = (message: ServerToHostMessage) => {
       switch (message.type) {
         case 'room':
+          setPresentation(message.presentation ?? DEFAULT_PRESENTATION);
           for (const player of message.players) engine.upsertPlayer(player);
           if (!restored) {
             restored = true;
@@ -253,6 +264,7 @@ export function HostView() {
   };
 
   const joinUrl = session ? `${window.location.origin}/play/${session.roomCode}` : '';
+  const joinHost = window.location.host;
   const readyCount = ui.drivers.filter((driver) => driver.readyVersion !== undefined).length;
 
   return (
@@ -261,7 +273,7 @@ export function HostView() {
 
       {/* Room code badge */}
       <div className={`absolute left-4 top-4 px-4 py-2 ${panel}`}>
-        <div className="text-xs font-black uppercase tracking-widest opacity-60">Join at {window.location.host}/play</div>
+        <div className="text-xs font-black uppercase tracking-widest opacity-60">Join at {joinHost}</div>
         <div className="text-4xl font-black tracking-[0.2em]">{session?.roomCode ?? '·····'}</div>
         {connection !== 'open' ? <div className="text-xs font-bold text-[#ef233c]">{connection}…</div> : null}
       </div>
@@ -409,7 +421,7 @@ export function HostView() {
       {/* Host controls */}
       <div className="absolute bottom-4 right-4 flex flex-col items-end gap-2">
         {controlsOpen && config ? (
-          <div className={`w-80 p-3 text-sm font-bold ${panel}`}>
+          <div className={`max-h-[calc(100vh-5rem)] w-80 overflow-auto p-3 text-sm font-bold ${panel}`}>
             <label className="flex items-center justify-between gap-2 py-1">
               Round length (s)
               <input
@@ -472,6 +484,29 @@ export function HostView() {
                 New room
               </HostButton>
               <HostButton onClick={() => void document.documentElement.requestFullscreen?.()}>Fullscreen</HostButton>
+            </div>
+            <div className="mt-3 border-t-2 border-[#1d1b2e] pt-2">
+              <div className="text-xs font-black uppercase tracking-widest opacity-60">Player toolbox</div>
+              {toolboxSnippets.map((snippet) => {
+                const unlocked = !presentation.lockedHelpers.includes(snippet.id);
+                return (
+                  <label key={snippet.id} className="flex items-center justify-between gap-2 py-0.5">
+                    {snippet.title}
+                    <input
+                      type="checkbox"
+                      checked={unlocked}
+                      onChange={() => {
+                        const lockedHelpers = unlocked
+                          ? [...presentation.lockedHelpers, snippet.id]
+                          : presentation.lockedHelpers.filter((id) => id !== snippet.id);
+                        const next = { lockedHelpers };
+                        setPresentation(next);
+                        connectionRef.current?.send({ type: 'presentation', state: next });
+                      }}
+                    />
+                  </label>
+                );
+              })}
             </div>
             {error ? <div className="mt-2 text-xs text-[#ef233c]">{error}</div> : null}
           </div>

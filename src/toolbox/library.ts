@@ -200,6 +200,15 @@ interface PidControllerOptions extends PidGains {
    * This limits windup when the controller spends a long time saturated.
    */
   integralMax?: number;
+
+  /**
+   * Seconds over which to smooth the derivative. Default: 0.05. Use 0 for the raw derivative.
+   *
+   * D reacts to how fast the error changes, so sensor noise and sudden jumps,
+   * like a new car cutting in ahead, make it spike. Smoothing over about 0.1 s
+   * calms those spikes at the cost of reacting slightly later.
+   */
+  derivativeSmoothing?: number;
 }
 
 /**
@@ -244,6 +253,7 @@ function createPidController(options: PidControllerOptions): PidController {
   let integral = 0;
   let previousError = 0;
   let hasPreviousError = false;
+  let derivative = 0;
   let lastTerms: PidDebugTerms = {
     error: 0,
     proportional: 0,
@@ -273,9 +283,14 @@ function createPidController(options: PidControllerOptions): PidController {
         );
       }
 
-      const derivative = hasPreviousError
+      const rawDerivative = hasPreviousError
         ? (error - previousError) / dt
         : 0;
+      // Low-pass filter: move part of the way toward the newest derivative each tick.
+      const smoothing = Math.max(0, options.derivativeSmoothing ?? 0.05);
+      derivative = hasPreviousError && smoothing > 0
+        ? derivative + (rawDerivative - derivative) * (dt / (smoothing + dt))
+        : rawDerivative;
 
       previousError = error;
       hasPreviousError = true;
@@ -315,6 +330,7 @@ function createPidController(options: PidControllerOptions): PidController {
       integral = 0;
       previousError = 0;
       hasPreviousError = false;
+      derivative = 0;
       lastTerms = {
         error: 0,
         proportional: 0,
@@ -362,6 +378,31 @@ export const steeringFeedforwardImplementation = `/**
 function steeringFeedforward(curvature: number, speed: number): number {
   const fullLockTurnRate = 0.68 * clamp(speed / 22, 0.08, 1);
   return clamp((curvature * speed) / fullLockTurnRate, -1, 1);
+}`;
+
+export const lateralVelocityImplementation = `/**
+ * Steers so the car moves sideways at the speed you ask for.
+ *
+ * This is the inner loop of a cascade: you decide how fast to move toward the
+ * lane center (for example with a PID on lane.centerOffset), and this turns
+ * that sideways speed into a steering command. It is the same controller
+ * "Steer for me" uses.
+ *
+ * @param input Current sensor snapshot.
+ * @param targetLateralVelocity Sideways speed to hold, in m/s. Positive moves right.
+ * @returns Normalized steering command in [-1, 1].
+ */
+function lateralVelocitySteering(input: AutopilotInput, targetLateralVelocity: number): number {
+  const speed = Math.max(1, input.ego.speed);
+  // Moving sideways at v means angling the car by asin(v / speed). Cap it at about 15°.
+  const maxSideways = speed * Math.sin(0.26);
+  const target = clamp(targetLateralVelocity, -maxSideways, maxSideways);
+  const targetHeading = Math.asin(target / speed);
+  const headingCorrection = (targetHeading - input.ego.heading) * 1.55;
+  const velocityCorrection = (target - input.ego.lateralVelocity) * 0.095;
+  // Turn with the road so curves don't count as sideways drift.
+  const curve = steeringFeedforward(analyzeLane(input.laneLines).curvature, speed);
+  return clamp(headingCorrection + velocityCorrection + curve, -1, 1);
 }`;
 
 export const adaptiveCruiseImplementation = `/**
@@ -544,12 +585,37 @@ function hasRoomToMerge(
   });
 }`;
 
-export const toolboxLibrarySource = [
-  clampImplementation,
-  vehicleFilteringImplementation,
-  pidControllerImplementation,
-  speedFeedforwardImplementation,
-  steeringFeedforwardImplementation,
-  adaptiveCruiseImplementation,
-  laneSelectionImplementation,
-].join('\n\n');
+/**
+ * Toolbox source, grouped by the toolbox snippet that introduces it. `requires`
+ * lists other groups the source calls, so they are shown alongside it.
+ */
+const toolboxModules: { id: string; source: string; requires?: string[] }[] = [
+  { id: 'clamp', source: clampImplementation },
+  { id: 'vehicle-filtering', source: vehicleFilteringImplementation },
+  { id: 'pid-controller', source: pidControllerImplementation },
+  { id: 'speed-feedforward', source: speedFeedforwardImplementation },
+  { id: 'steering-feedforward', source: steeringFeedforwardImplementation },
+  { id: 'lateral-velocity', source: lateralVelocityImplementation, requires: ['steering-feedforward'] },
+  { id: 'adaptive-cruise', source: adaptiveCruiseImplementation, requires: ['vehicle-filtering'] },
+  { id: 'fastest-lane', source: laneSelectionImplementation, requires: ['vehicle-filtering'] },
+];
+
+/** Every toolbox helper. Drivers always run with all of them, even ones the presenter has locked. */
+export const toolboxLibrarySource = toolboxModules.map((module) => module.source).join('\n\n');
+
+/**
+ * Toolbox source to show in the editor when some snippets are locked: everything
+ * except locked groups that no unlocked group needs. clamp is always included.
+ */
+export function visibleToolboxSource(lockedIds: readonly string[]): string {
+  const locked = new Set(lockedIds);
+  const visible = new Set<string>();
+  const show = (id: string): void => {
+    if (visible.has(id)) return;
+    visible.add(id);
+    for (const dependency of toolboxModules.find((module) => module.id === id)?.requires ?? []) show(dependency);
+  };
+  show('clamp');
+  for (const module of toolboxModules) if (!locked.has(module.id)) show(module.id);
+  return toolboxModules.filter((module) => visible.has(module.id)).map((module) => module.source).join('\n\n');
+}

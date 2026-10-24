@@ -1,17 +1,19 @@
 import { Braces, Wrench } from 'lucide-react';
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { ToolboxSnippet } from '../toolbox';
+import { snippetInsertion, type ToolboxSnippet } from '../toolbox';
 import { Button } from './Button';
 import { ToolboxVisual } from './ToolboxVisuals';
 
 interface ToolboxPanelProps {
   snippets: ToolboxSnippet[];
+  /** The code being edited, so snippets can adapt to it (for example, picking an unused PID name). */
+  source: string;
   onInsert: (code: string, setup?: string[]) => void;
 }
 
 const POPOVER_WIDTH = 720;
 
-export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
+export function ToolboxPanel({ snippets, source, onInsert }: ToolboxPanelProps) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLDivElement>(null);
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties>();
@@ -90,7 +92,8 @@ export function ToolboxPanel({ snippets, onInsert }: ToolboxPanelProps) {
                     type="button"
                     size="sm"
                     onClick={() => {
-                      onInsert(selected.usage, selected.setup);
+                      const insertion = snippetInsertion(selected, source);
+                      onInsert(insertion.usage, insertion.setup);
                       setOpen(false);
                     }}
                   >

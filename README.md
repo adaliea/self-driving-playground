@@ -36,7 +36,9 @@ This runs built-in traffic outside the user-code runner and reports traffic wave
 
 ## Multiplayer Races
 
-Open `/host` on the presenter screen. It creates a room and shows a five-character code. Players open `/play` (or `/play/CODE`), enter the code and a display name, then use the normal editor and simulator to practice. **Submit to race** sends the current code once it compiles locally.
+Open `/host` on the presenter screen. It creates a room and shows a five-character code. Players open the site root `/` (or `/play/CODE`), enter the code and a display name, then use the normal editor and simulator to practice. **Submit to race** sends the current code once it compiles locally. The solo playground, with every example, lives at `/playground`.
+
+Inside a room, players start from the talk starter (bang-bang motor control with **Steer for me** on) and only see that one example, with a **Start over** button to get back to it. Their code and settings are saved separately from the solo playground. Under **Host controls → Player toolbox**, the presenter chooses which toolbox helpers players can see; changes reach every player immediately. New rooms start with Adaptive Cruise, Fastest Lane and Lateral Velocity Steering locked. Locking only hides a helper from the menu and the Toolbox.ts tab; drivers that already call it keep working.
 
 - The presenter's browser is authoritative. It compiles every submission and runs each player's driver in its own sandboxed iframe and worker, steps one shared simulation, and scores rounds. Other players never receive anyone's source.
 - Every submission is test-driven on the server before it reaches the presenter (see **Submission validation** below). The button shows **Validating…** meanwhile; hover it for the result.
@@ -86,6 +88,10 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
 }
 ```
 
+`input.ego` includes `speed`, `heading` (radians, positive points right), `lateralVelocity` (sideways speed across the road in m/s, positive moving right), `yawRate`, and `laneIndex`.
+
+The editor flags likely mistakes that still run with a yellow underline, such as creating a PID controller inside `autopilot`, where it would reset every tick.
+
 The editor exposes documented public types for `AutopilotInput`, `AutopilotOutput`, vehicle detections, and lane-line samples. Vehicle detections include noisy ego-relative position, velocity, dimensions, and `relativeHeading` yaw. The simulator clamps invalid `motor` and `steering` values to `[-1, 1]` and ignores untrusted fields for physics.
 
 ## Sandbox Model
@@ -123,6 +129,7 @@ Known simplifications:
 
 The app includes:
 
+- Starter: bang-bang (the talk's starting point)
 - P-only lane keeping
 - PID lane keeping
 - PID lane keeping plus speed control
@@ -131,6 +138,8 @@ The app includes:
 - Speed control with `Steer for me`
 - Fastest lane (lane changes with a configurable minimum speed differential)
 - Intentionally bad oscillating controller
+
+The **Starter: bang-bang** example is the talk's starting point: half throttle, or coast when the car ahead is within 30 m, with **Steer for me** doing the steering.
 
 The default example is a working PID lane-keeping controller with comments explaining the P, I, and D terms. PID terms appear automatically in telemetry, labeled with the controller variable name (for example, `lanePid` or `speedPid`). No debug configuration or return fields are needed. Each PID card includes a collapsed-by-default 30-second history graph of error, P, I, D, their sum, and the limited output. ECharts provides hover inspection, wheel zoom, drag panning, a range slider, and image export. Error uses a separate scale from output contributions. Open **Explore telemetry** for a single fullscreen graph workspace. The **Lead vehicle** group includes estimated forward speed, relative forward/lateral velocity, distance ahead, and lateral offset from the same tracked vehicle the controller sees. Missing leads produce gaps; positive relative forward velocity means the lead is pulling away. Select any combination of speed, lead vehicle, motor, steering, and PID signals from the searchable signal list. Add, rename, or remove graph tabs for separate selections, and adjust graph height. Vehicle plots compare autopilot commands, commands after assists, and actual actuation. History records while graphs are closed; **Hold history** freezes the view without pausing the simulation. Graphs use simulation time and reset when the simulation resets or code changes.
 
@@ -146,10 +155,19 @@ The toolbox panel lists helpers from a virtual `autopilot-toolbox.ts` file, each
 - lane reading (`analyzeLane`)
 - speed feedforward (`speedFeedforward`)
 - steering feedforward (`steeringFeedforward`)
+- lateral velocity steering (`lateralVelocitySteering`)
 - adaptive cruise target speed (`adaptiveCruiseTargetSpeed`)
 - stateful fastest-lane chooser (`createLaneChooser`)
 
 **Insert usage** puts a short example at the editor cursor. Declarations that must keep state between ticks, such as a PID controller, go above `autopilot` instead, unless the file already declares them. The implementations stay out of `Autopilot.ts`, but Monaco can still navigate to them with Go to Definition / Ctrl-click, opening the read-only toolbox file at the definition.
+
+### PID derivative smoothing
+
+`createPidController` smooths its derivative over `derivativeSmoothing` seconds (default 0.05). That keeps D usable on noisy lane lines and stops it from slamming the brakes when a new car cuts in ahead. Set it to `0` for the raw derivative.
+
+### Lateral velocity steering
+
+`lateralVelocitySteering(input, targetLateralVelocity)` is the inner loop of a cascade: it steers so the car moves sideways at the requested speed, using the same controller as **Steer for me**. You supply the outer loop, for example a PID on `lane.centerOffset` with output limits of about ±1.5 m/s.
 
 ### Feedforward and wind
 

@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
+  DEFAULT_PRESENTATION,
   MAX_MESSAGE_BYTES,
   MAX_PLAYERS_PER_ROOM,
   MAX_SOURCE_BYTES,
@@ -11,6 +12,7 @@ import {
   type JoinRoomResponse,
   type LeaderboardEntry,
   type PlayerSummary,
+  type PresentationState,
   type RoundState,
   type ServerToHostMessage,
   type ServerToPlayerMessage,
@@ -126,6 +128,7 @@ export class Room extends DurableObject<Env> {
     await this.touch();
 
     const round = await this.roundState();
+    const presentation = await this.presentationState();
     if (attachment.role === 'host') {
       const players = await this.players();
       send(server, {
@@ -134,6 +137,7 @@ export class Room extends DurableObject<Env> {
         players: [...players.values()].map((candidate) => this.summary(candidate)),
         round,
         leaderboard: (await this.ctx.storage.get<LeaderboardEntry[]>('leaderboard')) ?? [],
+        presentation,
       } satisfies ServerToHostMessage);
       for (const candidate of players.values()) {
         if (candidate.source && candidate.submittedAt !== undefined) {
@@ -153,6 +157,7 @@ export class Room extends DurableObject<Env> {
         name: player.name,
         roomCode: meta.roomCode,
         round,
+        presentation,
         version: player.version || undefined,
         validating: this.validating.has(player.id) || undefined,
       } satisfies ServerToPlayerMessage);
@@ -310,6 +315,10 @@ export class Room extends DurableObject<Env> {
       case 'driver-status':
         for (const playerSocket of this.ctx.getWebSockets(message.playerId)) send(playerSocket, message);
         return;
+      case 'presentation':
+        await this.ctx.storage.put('presentation', message.state);
+        this.broadcastToPlayers({ type: 'presentation', state: message.state });
+        return;
     }
   }
 
@@ -324,6 +333,10 @@ export class Room extends DurableObject<Env> {
 
   private async roundState(): Promise<RoundState> {
     return (await this.ctx.storage.get<RoundState>('round')) ?? { phase: 'lobby', round: 0 };
+  }
+
+  private async presentationState(): Promise<PresentationState> {
+    return (await this.ctx.storage.get<PresentationState>('presentation')) ?? DEFAULT_PRESENTATION;
   }
 
   private summary(player: StoredPlayer, closingSocket?: WebSocket): PlayerSummary {

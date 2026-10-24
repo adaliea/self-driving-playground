@@ -3,7 +3,7 @@ import { useEffect, useId, useState, useSyncExternalStore } from 'react';
 import { TelemetryExplorer } from './TelemetryExplorer';
 import { recordTelemetry, type TelemetryHistory } from './telemetryHistory';
 import type { PidSample } from './pidHistory';
-import type { RuntimeInspectionStore } from '../sandbox';
+import type { CompileWarning, RuntimeInspectionStore } from '../sandbox';
 import { pidTelemetryFromInspection } from './pidTelemetry';
 import { AlertTriangle, ChevronRight, Info, ShieldCheck } from 'lucide-react';
 import type { RenderTelemetry } from '../rendering';
@@ -13,10 +13,11 @@ interface TelemetryPanelProps {
   telemetry?: RenderTelemetry;
   inspectionStore: RuntimeInspectionStore;
   compileErrors: string[];
+  compileWarnings?: CompileWarning[];
   runtimeError?: string;
 }
 
-export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runtimeError }: TelemetryPanelProps) {
+export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, compileWarnings = [], runtimeError }: TelemetryPanelProps) {
   const inspection = useSyncExternalStore(
     (listener) => inspectionStore.subscribe(listener),
     () => inspectionStore.getState(),
@@ -56,6 +57,9 @@ export function TelemetryPanel({ telemetry, inspectionStore, compileErrors, runt
           <StatusLine tone="warning" label={`Invalid output fields clamped: ${telemetry.invalidFields.join(', ')}`} />
         ) : null}
         {telemetry?.collisions ? <StatusLine tone="warning" label={`Ego collision count: ${telemetry.collisions}`} /> : null}
+        {compileWarnings.map((warning) => (
+          <StatusLine key={warning.start} tone="warning" label={warning.message} />
+        ))}
       </ul>
 
       <div className="grid gap-x-6 xl:grid-cols-2">

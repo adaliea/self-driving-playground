@@ -8,6 +8,44 @@ export interface ControllerExample {
   recommendedSettings?: Partial<PlaygroundSettings>;
 }
 
+/** Where the talk starts: bang-bang motor control, with "Steer for me" doing the steering. */
+export const starterExample: ControllerExample = {
+  id: 'starter',
+  title: 'Starter: bang-bang',
+  description: 'A deliberately crude starting point: half throttle, or coast when too close to the car ahead. "Steer for me" steers.',
+  recommendedSettings: { steerAssist: true },
+  code: `// Your car runs this function about 45 times a second. It reads the sensors
+// in \`input\` and returns two commands, each from -1 to 1:
+//   motor:    1 = full throttle, 0 = coast, -1 = full brake
+//   steering: -1 = full left, 1 = full right
+//
+// "Steer for me" is on in Settings, so your steering is ignored for now.
+
+// Coast when the car ahead is closer than this. Distances are measured
+// center to center, and cars are about 4.6 m long.
+const FOLLOW_DISTANCE = 30; // meters
+
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  // The closest car ahead in your lane, or undefined if the lane is clear.
+  const lead = closestVehicleAhead(input.vehicles, input.laneLines);
+  // How far ahead it is, counting anything past 100 m (or nothing at all) as 100 m.
+  const closestVehicleDistance = lead ? Math.min(lead.relativeY, 100) : 100;
+  graph('distance to closest vehicle', closestVehicleDistance, 'm');
+
+  // Bang-bang control: one of two fixed commands, nothing in between.
+  let motor = 0.5;
+  if (closestVehicleDistance < FOLLOW_DISTANCE) {
+    motor = 0;
+  }
+
+  // How far the lane center is from you, in meters (positive is to your right).
+  const lane = analyzeLane(input.laneLines);
+  const steering = lane.centerOffset * 0.3;
+
+  return { motor, steering };
+}`,
+};
+
 export const controllerExamples: ControllerExample[] = [
   {
     id: 'pid-lane-default',
@@ -51,6 +89,7 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   };
 }`,
   },
+  starterExample,
   {
     id: 'p-only-lane',
     title: 'P-only lane keeping',

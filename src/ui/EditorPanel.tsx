@@ -1,5 +1,5 @@
 import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react';
-import { LockKeyhole } from 'lucide-react';
+import { LockKeyhole, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { editor } from 'monaco-editor/esm/vs/editor/editor.api';
 import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
@@ -9,8 +9,8 @@ import 'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.
 import 'monaco-editor/esm/vs/language/typescript/monaco.contribution.js';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import TypeScriptWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
-import type { RuntimeInspectionStore } from '../sandbox';
-import { toolboxLibrarySource, type ControllerExample } from '../toolbox';
+import type { CompileWarning, RuntimeInspectionStore } from '../sandbox';
+import type { ControllerExample } from '../toolbox';
 import { publicAutopilotDts } from '../types/publicDts';
 import { RuntimeValueWidget } from './RuntimeValueWidget';
 
@@ -57,7 +57,7 @@ const autopilotHoverDocs: Record<string, string> = {
     '| Field | Meaning |',
     '| --- | --- |',
     '| `dt` | Fixed simulation timestep in seconds. Use this for PID integration and derivatives. |',
-    '| `ego` | Current ego speed, heading, and lane index. |',
+    '| `ego` | Current ego speed, heading, sideways velocity, and lane index. |',
     '| `vehicles` | Stable filtered tracks, including velocity and uncertainty. |',
     '| `vehicleMeasurements` | Raw noisy observations before tracking; these may drop out. |',
     '| `laneLines` | Left/right/far lane-line sample points relative to ego. |',
@@ -80,7 +80,7 @@ const autopilotHoverDocs: Record<string, string> = {
     '',
     'Basic state of the controlled car.',
     '',
-    '`speed` is meters per second. `heading` is radians relative to the road/world frame. `yawRate` is the world turn rate in radians per second (positive is right), including road curvature. `laneIndex` is `0`, `1`, or `2` on the current 3-lane road.',
+    '`speed` is meters per second. `heading` is radians relative to the road/world frame (positive points right). `lateralVelocity` is sideways speed across the road in m/s (positive is moving right). `yawRate` is the world turn rate in radians per second (positive is right), including road curvature. `laneIndex` is `0`, `1`, or `2` on the current 3-lane road.',
   ].join('\n'),
   VehicleMeasurement: [
     '**VehicleMeasurement**',
@@ -147,7 +147,9 @@ const autopilotHoverDocs: Record<string, string> = {
     '',
     'Toolbox helper from `autopilot-toolbox.ts`.',
     '',
-    'Creates a stateful PID controller with output limits, optional integral limits, reset, and debug terms.',
+    'Creates a stateful PID controller with output limits, optional integral limits, derivative smoothing, reset, and debug terms.',
+    '',
+    'Create it once, above `autopilot`, so it remembers its integral and previous error between ticks.',
   ].join('\n'),
   analyzeLane: [
     '**analyzeLane(laneLines, relativeTargetLane?, mode?)**',
@@ -164,6 +166,13 @@ const autopilotHoverDocs: Record<string, string> = {
     'Toolbox helper from `autopilot-toolbox.ts`.',
     '',
     'Estimates the steering command that follows a curve of the given curvature at the given speed. Add PID feedback on the lane error to correct the rest.',
+  ].join('\n'),
+  lateralVelocitySteering: [
+    '**lateralVelocitySteering(input, targetLateralVelocity)**',
+    '',
+    'Toolbox helper from `autopilot-toolbox.ts`.',
+    '',
+    'Steers so the car moves sideways at `targetLateralVelocity` m/s (positive is right). It is the inner loop of a cascade: choose the sideways speed yourself, for example with a PID on `lane.centerOffset`. This is the controller "Steer for me" uses.',
   ].join('\n'),
   speedFeedforward: [
     '**speedFeedforward(targetSpeed)**',
@@ -244,15 +253,15 @@ function registerPublicAutopilotDts(monaco: MonacoApi): void {
   monaco.languages.typescript.typescriptDefaults.addExtraLib(publicAutopilotDts, autopilotApiDtsUri);
 }
 
-function ensureToolboxModel(monaco: MonacoApi): void {
+function ensureToolboxModel(monaco: Pick<MonacoApi, 'editor' | 'Uri'>, source: string): void {
   const uri = monaco.Uri.parse(toolboxModelUri);
   const existing = monaco.editor.getModel(uri);
   if (existing) {
-    if (existing.getValue() !== toolboxLibrarySource) existing.setValue(toolboxLibrarySource);
+    if (existing.getValue() !== source) existing.setValue(source);
     return;
   }
 
-  monaco.editor.createModel(toolboxLibrarySource, 'typescript', uri);
+  monaco.editor.createModel(source, 'typescript', uri);
 }
 
 function editorFileForUri(resource: monacoEditor.Uri): ActiveEditorFile | undefined {
@@ -286,6 +295,10 @@ interface EditorPanelProps {
   examples: ControllerExample[];
   selectedExampleId: string;
   compileErrors: string[];
+  /** Likely mistakes in Autopilot.ts, shown as warning squiggles. */
+  compileWarnings: CompileWarning[];
+  /** Toolbox source to show and type-check against: helpers the presenter hasn't locked. */
+  toolboxSource: string;
   codeStatus: string;
   inspectionStore: RuntimeInspectionStore;
   /**
@@ -302,6 +315,8 @@ export function EditorPanel({
   examples,
   selectedExampleId,
   compileErrors,
+  compileWarnings,
+  toolboxSource,
   codeStatus,
   inspectionStore,
   renderToolbox,
@@ -314,6 +329,8 @@ export function EditorPanel({
   const pendingRevealRef = useRef<EditorLocation>();
   // Until someone clicks into the code, the cursor sits at line 1, so inserts append instead.
   const hasPlacedCursorRef = useRef(false);
+  const toolboxSourceRef = useRef(toolboxSource);
+  toolboxSourceRef.current = toolboxSource;
   const [activeFile, setActiveFile] = useState<ActiveEditorFile>('autopilot');
   const isToolboxActive = activeFile === 'toolbox';
   const isApiActive = activeFile === 'api';
@@ -331,7 +348,7 @@ export function EditorPanel({
     });
     registerPublicAutopilotDts(monaco);
     ensurePublicApiModel(monaco);
-    ensureToolboxModel(monaco);
+    ensureToolboxModel(monaco, toolboxSourceRef.current);
     registerAutopilotHoverProvider(monaco);
     monaco.editor.defineTheme('autopilot-dark', {
       base: 'vs-dark',
@@ -391,6 +408,34 @@ export function EditorPanel({
       new RuntimeValueWidget(monacoEditor, editorInstance, inspectionStore, autopilotModelUri),
     ];
   };
+
+  useEffect(() => {
+    ensureToolboxModel(monacoEditor, toolboxSource);
+  }, [toolboxSource]);
+
+  useEffect(() => {
+    const model = monacoEditor.editor.getModel(monacoEditor.Uri.parse(autopilotModelUri));
+    if (!model) return;
+    const length = model.getValueLength();
+    monacoEditor.editor.setModelMarkers(
+      model,
+      'playground-lint',
+      compileWarnings
+        .filter((warning) => warning.start + warning.length <= length)
+        .map((warning) => {
+          const start = model.getPositionAt(warning.start);
+          const end = model.getPositionAt(warning.start + warning.length);
+          return {
+            severity: monacoEditor.MarkerSeverity.Warning,
+            message: warning.message,
+            startLineNumber: start.lineNumber,
+            startColumn: start.column,
+            endLineNumber: end.lineNumber,
+            endColumn: end.column,
+          };
+        }),
+    );
+  }, [compileWarnings]);
 
   const insertAtCursor = useCallback((code: string, setup: string[] = []) => {
     const currentEditor = editorRef.current;
@@ -464,25 +509,37 @@ export function EditorPanel({
           ) : (
             <>
               {renderToolbox(insertAtCursor)}
-              <label className="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs text-muted-foreground focus-within:ring-1 focus-within:ring-ring">
-                <span className="sr-only">Load example controller</span>
-                <select
-                  value={selectedExampleId}
-                  onChange={(event) => onLoadExample(event.target.value)}
-                  className="max-w-56 bg-transparent text-foreground outline-none focus-visible:outline-none"
+              {examples.length === 1 ? (
+                <button
+                  type="button"
+                  onClick={() => onLoadExample(examples[0].id)}
+                  title={`Replace your code with "${examples[0].title}"`}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md border border-input px-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
-                  {!hasSelectedExample ? (
-                    <option value={selectedExampleId} className="bg-popover text-popover-foreground">
-                      Custom saved code
-                    </option>
-                  ) : null}
-                  {examples.map((example) => (
-                    <option key={example.id} value={example.id} className="bg-popover text-popover-foreground">
-                      {example.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <RotateCcw size={12} aria-hidden="true" />
+                  Start over
+                </button>
+              ) : (
+                <label className="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs text-muted-foreground focus-within:ring-1 focus-within:ring-ring">
+                  <span className="sr-only">Load example controller</span>
+                  <select
+                    value={selectedExampleId}
+                    onChange={(event) => onLoadExample(event.target.value)}
+                    className="max-w-56 bg-transparent text-foreground outline-none focus-visible:outline-none"
+                  >
+                    {!hasSelectedExample ? (
+                      <option value={selectedExampleId} className="bg-popover text-popover-foreground">
+                        Custom saved code
+                      </option>
+                    ) : null}
+                    {examples.map((example) => (
+                      <option key={example.id} value={example.id} className="bg-popover text-popover-foreground">
+                        {example.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </>
           )}
         </div>
@@ -494,7 +551,7 @@ export function EditorPanel({
           language="typescript"
           theme="autopilot-dark"
           path={isToolboxActive ? toolboxModelUri : isApiActive ? autopilotApiDtsUri : autopilotModelUri}
-          defaultValue={isToolboxActive ? toolboxLibrarySource : isApiActive ? publicAutopilotDts : undefined}
+          defaultValue={isToolboxActive ? toolboxSource : isApiActive ? publicAutopilotDts : undefined}
           value={isReadOnly ? undefined : code}
           beforeMount={beforeMount}
           onMount={onMount}
@@ -540,6 +597,11 @@ export function EditorPanel({
             ) : (
               codeStatus
             )}
+            {compileWarnings.length > 0 ? (
+              <span className="text-warning">
+                {compileWarnings.length} warning{compileWarnings.length === 1 ? '' : 's'}: hover the yellow underline
+              </span>
+            ) : null}
           </>
         )}
       </div>

@@ -17,6 +17,19 @@ export const MAX_PLAYERS_PER_ROOM = 50;
 
 export type RoundPhase = 'lobby' | 'racing' | 'intermission';
 
+/** What the presenter currently lets players see. */
+export interface PresentationState {
+  /** Toolbox snippet ids hidden from players' toolbox menus. */
+  lockedHelpers: string[];
+}
+
+/** New rooms start with the ready-made answers locked, so the presenter can reveal them. */
+export const DEFAULT_PRESENTATION: PresentationState = {
+  lockedHelpers: ['adaptive-cruise', 'fastest-lane', 'lateral-velocity'],
+};
+
+const MAX_LOCKED_HELPERS = 32;
+
 export interface RoundState {
   phase: RoundPhase;
   round: number;
@@ -101,6 +114,7 @@ export type HostToServerMessage =
   | { type: 'round-state'; state: RoundState }
   | { type: 'leaderboard'; entries: LeaderboardEntry[] }
   | ({ type: 'driver-status' } & DriverStatusUpdate)
+  | { type: 'presentation'; state: PresentationState }
   | { type: 'ping' };
 
 // ---- Server -> player ----
@@ -111,6 +125,7 @@ export type ServerToPlayerMessage =
       name: string;
       roomCode: string;
       round: RoundState;
+      presentation: PresentationState;
       version?: number;
       /** True while a submission from this player is still being test-driven. */
       validating?: boolean;
@@ -123,6 +138,7 @@ export type ServerToPlayerMessage =
   | { type: 'round-state'; state: RoundState }
   | { type: 'leaderboard'; entries: LeaderboardEntry[] }
   | ({ type: 'driver-status' } & DriverStatusUpdate)
+  | { type: 'presentation'; state: PresentationState }
   | { type: 'error'; message: string }
   | { type: 'pong' };
 
@@ -134,6 +150,7 @@ export type ServerToHostMessage =
       players: PlayerSummary[];
       round: RoundState;
       leaderboard: LeaderboardEntry[];
+      presentation: PresentationState;
     }
   | { type: 'player'; player: PlayerSummary }
   | { type: 'submission'; playerId: string; version: number; submittedAt: number; source: string }
@@ -194,6 +211,10 @@ export function parseHostMessage(value: unknown): HostToServerMessage | undefine
       const state = parseRoundState(value.state);
       return state ? { type: 'round-state', state } : undefined;
     }
+    case 'presentation': {
+      const state = parsePresentationState(value.state);
+      return state ? { type: 'presentation', state } : undefined;
+    }
     case 'leaderboard': {
       if (!Array.isArray(value.entries) || value.entries.length > MAX_PLAYERS_PER_ROOM) return undefined;
       const entries = value.entries.map(parseLeaderboardEntry);
@@ -219,6 +240,14 @@ export function parseHostMessage(value: unknown): HostToServerMessage | undefine
     default:
       return undefined;
   }
+}
+
+export function parsePresentationState(value: unknown): PresentationState | undefined {
+  if (!isRecord(value) || !Array.isArray(value.lockedHelpers) || value.lockedHelpers.length > MAX_LOCKED_HELPERS) return undefined;
+  const lockedHelpers = value.lockedHelpers.filter(
+    (id): id is string => typeof id === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(id),
+  );
+  return { lockedHelpers: [...new Set(lockedHelpers)] };
 }
 
 function parseRoundState(value: unknown): RoundState | undefined {

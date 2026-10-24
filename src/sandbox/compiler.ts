@@ -8,10 +8,19 @@ import {
   type ToolboxInspectorName,
 } from './inspection';
 
+export interface CompileWarning {
+  message: string;
+  /** Offset and length of the code the warning is about, in the user's source. */
+  start: number;
+  length: number;
+}
+
 export interface CompileResult {
   ok: boolean;
   js: string;
   errors: string[];
+  /** Likely mistakes that still compile and run. */
+  warnings: CompileWarning[];
   inspection: InspectionManifest;
 }
 
@@ -39,6 +48,7 @@ export function compileUserCode(source: string): CompileResult {
     ok: errors.length === 0,
     js: `${toolboxResult.outputText}\n${userResult.outputText}`,
     errors,
+    warnings: userResult.warnings,
     inspection: userResult.inspection,
   };
 }
@@ -46,6 +56,7 @@ export function compileUserCode(source: string): CompileResult {
 interface InstrumentedTranspileOutput {
   outputText: string;
   diagnostics: readonly ts.Diagnostic[];
+  warnings: CompileWarning[];
   inspection: InspectionManifest;
 }
 
@@ -62,6 +73,7 @@ function transpileInstrumentedUserCode(source: string): InstrumentedTranspileOut
   const bindingIdsBySymbol = new Map<ts.Symbol, string>();
   const bindingMetadataById = new Map<string, RuntimeBindingMetadata>();
   const toolboxCallIdsByStart = new Map<number, string>();
+  const warnings: CompileWarning[] = [];
   let outputText = '';
 
   const options: ts.CompilerOptions = {
@@ -125,6 +137,14 @@ function transpileInstrumentedUserCode(source: string): InstrumentedTranspileOut
     const existing = toolboxCallIdsByStart.get(start);
     if (existing) return existing;
     const name = (call.expression as ts.Identifier).text as ToolboxInspectorName;
+    if (name === 'createPidController' && enclosingFunction(call)) {
+      warnings.push({
+        message:
+          'This creates a new PID controller every time the function runs, so it forgets its integral and previous error, and I and D stay at 0. Create it once, above "export function autopilot".',
+        start,
+        length: call.getEnd() - start,
+      });
+    }
     const id = `c:${start}`;
     toolboxCallIdsByStart.set(start, id);
     toolboxCalls.push({ id, name, span: spanFor(call.expression) });
@@ -244,12 +264,20 @@ function transpileInstrumentedUserCode(source: string): InstrumentedTranspileOut
   return {
     outputText,
     diagnostics,
+    warnings,
     inspection: { bindings, toolboxCalls },
   };
 
   function spanFor(node: ts.Node): { start: number; length: number } {
     const start = node.getStart(sourceFile);
     return { start, length: node.getEnd() - start };
+  }
+
+  function enclosingFunction(node: ts.Node): ts.SignatureDeclaration | undefined {
+    for (let current = node.parent; current; current = current.parent) {
+      if (ts.isFunctionLike(current)) return current;
+    }
+    return undefined;
   }
 
   function bindingIdFor(identifier: ts.Identifier): string {
