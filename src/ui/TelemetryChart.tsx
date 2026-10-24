@@ -14,6 +14,8 @@ export interface ChartSeries {
   key: string;
   label: string;
   color: string;
+  /** Dash used with `color` in the default mode; solid when unset. */
+  defaultPattern?: LinePattern;
   axis?: string;
   /** Used instead of `color`, together with `pattern`, when colorblind-friendly charts are on. */
   colorblindColor?: string;
@@ -127,8 +129,8 @@ export function TelemetryChart({ name, history, series, panels, note, height = 3
 export function LineSwatch({ series, colorblind }: { series: ChartSeries; colorblind: boolean }) {
   const { color, dash } = seriesStyle(series, colorblind);
   return (
-    <svg aria-hidden="true" width="18" height="6" viewBox="0 0 18 6" className="shrink-0">
-      <line x1="1" y1="3" x2="17" y2="3" stroke={color} strokeWidth={colorblind ? 1.75 : 1.5} strokeLinecap="round" strokeDasharray={dash?.join(' ')} />
+    <svg aria-hidden="true" width="24" height="6" viewBox="0 0 24 6" className="shrink-0">
+      <line x1="1" y1="3" x2="23" y2="3" stroke={color} strokeWidth={colorblind ? 1.75 : 1.5} strokeLinecap="round" strokeDasharray={dash?.join(' ')} />
     </svg>
   );
 }

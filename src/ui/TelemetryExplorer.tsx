@@ -2,8 +2,8 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ExternalLink, Maximize2, Plus, Search, X } from 'lucide-react';
 import { PopoutWindow, openPopoutWindow } from './PopoutWindow';
-import { LineSwatch, TelemetryChart } from './TelemetryChart';
-import { setColorblindCharts, useColorblindCharts } from './chartStyles';
+import { LineSwatch, TelemetryChart, type ChartSeries } from './TelemetryChart';
+import { assignSlots, colorblindPalette, setColorblindCharts, slotStyle, useColorblindCharts } from './chartStyles';
 import { graphSignalKey, type TelemetryHistory } from './telemetryHistory';
 import type { NamedPidTelemetry } from './pidTelemetry';
 import { defaultSignals, telemetrySamples, telemetrySignals } from './telemetrySignals';
@@ -13,6 +13,9 @@ const iconButton = 'rounded-md p-2 text-muted-foreground transition-colors hover
 const quietButton = 'rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
 
 interface GraphTab { id: number; name: string; selected: string[] }
+
+/** Swatch for signals that are not on the graph; they get a real style once selected. */
+const unselectedStyle = { color: colorblindPalette.grey, colorblindColor: colorblindPalette.grey, pattern: 'solid' } as const;
 
 export function TelemetryExplorer({ history, controllers, running }: {
   history: TelemetryHistory; controllers: NamedPidTelemetry[]; running: boolean;
@@ -47,7 +50,13 @@ export function TelemetryExplorer({ history, controllers, running }: {
     setTabs((previous) => previous.map((tab) => ({ ...tab, selected: [...tab.selected, ...fresh.filter((key) => !tab.selected.includes(key))] })));
   }, [history.graphs]);
   const active = tabs.find((tab) => tab.id === activeId) ?? tabs[0];
-  const selected = signals.filter((signal) => active.selected.includes(signal.key));
+  // Styles come from the selection, so a graph's lines never share a colour and dash.
+  const slotsByTab = useRef(new Map<number, Record<string, number>>());
+  // Every selected key keeps its slot, even while its signal is briefly unavailable, such as a graph() series after a reset.
+  const slots = assignSlots(active.selected, slotsByTab.current.get(active.id));
+  slotsByTab.current.set(active.id, slots);
+  const styled = (signal: (typeof signals)[number]): ChartSeries => ({ ...signal, ...(slots[signal.key] === undefined ? unselectedStyle : slotStyle(slots[signal.key])) });
+  const selected = signals.filter((signal) => slots[signal.key] !== undefined).map(styled);
   const visible = signals.filter((signal) => `${signal.group} ${signal.label}`.toLowerCase().includes(query.toLowerCase()));
   const groups = [...new Set(visible.map((signal) => signal.group))];
   const updateTab = (update: Partial<GraphTab>) => setTabs((previous) => previous.map((tab) => tab.id === active.id ? { ...tab, ...update } : tab));
@@ -60,6 +69,7 @@ export function TelemetryExplorer({ history, controllers, running }: {
   const removeTab = (id: number) => {
     if (tabs.length === 1) return;
     const remaining = tabs.filter((tab) => tab.id !== id);
+    slotsByTab.current.delete(id);
     setTabs(remaining);
     if (activeId === id) setActiveId(remaining[0].id);
   };
@@ -124,7 +134,7 @@ export function TelemetryExplorer({ history, controllers, running }: {
                   <legend className="mb-1 px-2 text-xs text-muted-foreground">{group}</legend>
                   <div>{visible.filter((signal) => signal.group === group).map((signal) => <label key={signal.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent">
                     <input type="checkbox" checked={active.selected.includes(signal.key)} onChange={() => toggle(signal.key)} className="accent-signal" />
-                    <LineSwatch series={signal} colorblind={colorblind} />
+                    <LineSwatch series={styled(signal)} colorblind={colorblind} />
                     <span>{signal.label}</span>
                   </label>)}</div>
                 </fieldset>)}
