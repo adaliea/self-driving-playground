@@ -1,10 +1,24 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import App from '../App';
 import { useHostRoom, type HostRoom } from '../multiplayer/hostRoom';
-import { starterExample } from '../toolbox';
+import { settingsFromPush, type SettingsPush } from '../multiplayer/protocol';
+import {
+  brakingStarterExample,
+  checkpointExamples,
+  pidCheckpointExample,
+  raceReadyExample,
+  starterExample,
+  steeringPidCheckpointExample,
+  tunedFollowingExample,
+  tunedSteeringExample,
+  type ControllerExample,
+} from '../toolbox';
 import { toolboxSnippets } from '../toolbox/snippets';
 import { DeckButton, Toggle } from './controls';
+import { CheatSheet } from './CheatSheet';
 import { DemoRace } from './DemoRace';
+import { FeedforwardExplainer } from './FeedforwardExplainer';
+import { BeforeRacing, LaneChangeQuestion, LateralVelocityExplainer } from './LaneChangeSlides';
 import { PidPlayground } from './PidPlayground';
 import { cherry, deckFontStyle, lawnStyle, mint, panel, sky, sun } from './theme';
 
@@ -12,13 +26,43 @@ interface Slide {
   id: string;
   /** Header for slides that use the live editor or the full-width stage below it. */
   heading?: { title: string; hint: string };
-  /** Shows the presenter's editor in the stage area. */
-  editor?: boolean;
+  /** Shows the presenter's editor in the stage area, with this slide's own saved code. */
+  editor?: EditorSetup;
   /** Content drawn in the stage area, or full screen when there is no heading. */
   render?: (room: HostRoom) => ReactNode;
   /** Opens race submissions when the presenter reaches this slide. */
   opensSubmissions?: boolean;
+  /** Closes race submissions when the presenter reaches this slide. */
+  closesSubmissions?: boolean;
+  /** Toolbox snippet ids players can see from this slide on. */
+  unlocksHelpers?: string[];
+  /** Example players can "Catch up to presenter" with from this slide on. */
+  checkpointId?: string;
+  /** Settings everyone (presenter included) applies once on reaching this slide. */
+  settingsPush?: SettingsPush;
+  /** Full-screen slides that draw their own room code, such as the race. */
+  ownsChrome?: boolean;
 }
+
+// The race view is large and only needed on the last slide.
+const HostView = lazy(() => import('../multiplayer/HostView').then((module) => ({ default: module.HostView })));
+
+interface EditorSetup {
+  /** Where this slide's code is saved, so each editor slide keeps its own. */
+  storageNamespace: string;
+  /** The code the slide starts from, also what "Start over" restores. */
+  examples: ControllerExample[];
+}
+
+const BANG_BANG_EDITOR: EditorSetup = { storageNamespace: 'presentation:bang-bang:', examples: [starterExample] };
+/** Starts where the bang-bang demo ends: with the hard brake added. */
+const PID_EDITOR: EditorSetup = { storageNamespace: 'presentation:pid:', examples: [brakingStarterExample] };
+const TUNED_EDITOR: EditorSetup = { storageNamespace: 'presentation:tuned:', examples: [tunedFollowingExample] };
+/** The steering PID demo starts from the tuned following code. */
+const STEERING_PID_EDITOR: EditorSetup = { storageNamespace: 'presentation:steering-pid:', examples: [tunedFollowingExample] };
+const TUNED_STEERING_EDITOR: EditorSetup = { storageNamespace: 'presentation:tuned-steering:', examples: [tunedSteeringExample] };
+/** The feedforward demo starts from the tuned steering code. */
+const FEEDFORWARD_EDITOR: EditorSetup = { storageNamespace: 'presentation:feedforward:', examples: [tunedSteeringExample] };
 
 const SLIDES: Slide[] = [
   { id: 'title', render: (room) => <TitleSlide room={room} /> },
@@ -26,7 +70,7 @@ const SLIDES: Slide[] = [
   {
     id: 'bang-bang',
     heading: { title: 'Bang-bang control', hint: 'Full power, or nothing at all. What could go wrong?' },
-    editor: true,
+    editor: BANG_BANG_EDITOR,
   },
   {
     id: 'pid',
@@ -36,11 +80,91 @@ const SLIDES: Slide[] = [
   {
     id: 'add-pid',
     heading: { title: 'Your turn: add a PID loop', hint: 'Toolbox → PID Controller Object → Insert usage' },
-    editor: true,
+    editor: PID_EDITOR,
+    checkpointId: pidCheckpointExample.id,
   },
+  {
+    id: 'cheat-sheet',
+    heading: { title: 'Tuning cheat sheet', hint: 'Keep this up while you tune: P first, then D, then a little I.' },
+    render: () => <CheatSheet />,
+  },
+  {
+    id: 'tuned',
+    heading: { title: 'What I came up with', hint: 'Close in slow traffic, more room at speed. Explore the Toolbox for more, like speed feedforward.' },
+    editor: TUNED_EDITOR,
+    checkpointId: tunedFollowingExample.id,
+  },
+  {
+    id: 'steering-pid',
+    heading: { title: 'Steering with a PID', hint: '"Steer for me" is off now. Replace lane.centerOffset * 0.3 with a PID.' },
+    editor: STEERING_PID_EDITOR,
+    settingsPush: { id: 'steer-off-for-steering-pid', steerAssist: false },
+    checkpointId: steeringPidCheckpointExample.id,
+  },
+  {
+    id: 'steering-cheat-sheet',
+    heading: { title: 'Tuning cheat sheet: steering', hint: 'Now tune lanePid. Add D to stop the weaving, then raise P.' },
+    render: () => <CheatSheet variant="steering" />,
+  },
+  {
+    id: 'tuned-steering',
+    heading: { title: 'What I came up with', hint: 'Steady on the straights. Watch what happens in the curves.' },
+    editor: TUNED_STEERING_EDITOR,
+    checkpointId: tunedSteeringExample.id,
+  },
+  {
+    id: 'feedforward',
+    heading: { title: 'Feedforward: act on what you know is coming', hint: 'Both cars use the same feedback. Only one looks ahead.' },
+    render: () => <FeedforwardExplainer />,
+  },
+  {
+    id: 'add-feedforward',
+    heading: { title: 'Adding steering feedforward', hint: 'Type + after the PID call, then Toolbox → Steering Feedforward → Insert usage.' },
+    editor: FEEDFORWARD_EDITOR,
+  },
+  {
+    id: 'before-race',
+    heading: { title: 'Before we start racing', hint: 'Fastest Lane Selection is now in your Toolbox.' },
+    render: () => <BeforeRacing />,
+    unlocksHelpers: ['fastest-lane'],
+  },
+  {
+    id: 'race',
+    render: () => <RaceScreen />,
+    opensSubmissions: true,
+    checkpointId: raceReadyExample.id,
+    ownsChrome: true,
+  },
+  {
+    id: 'lane-change-question',
+    heading: { title: 'Is a PID the right way to change lanes?', hint: 'Racing is paused. Watch both cars move over one lane.' },
+    render: () => <LaneChangeQuestion />,
+    closesSubmissions: true,
+  },
+  {
+    id: 'lateral-velocity',
+    heading: { title: 'Lateral velocity control', hint: 'Lateral Velocity Steering is now in your Toolbox.' },
+    render: () => <LateralVelocityExplainer />,
+    unlocksHelpers: ['lateral-velocity'],
+  },
+  {
+    id: 'race-again',
+    render: () => <RaceScreen />,
+    opensSubmissions: true,
+    ownsChrome: true,
+  },
+  { id: 'thanks', render: () => <ThanksSlide /> },
 ];
 
-const PRESENTATION_EXAMPLES = [starterExample];
+/** The /host race screen. Leaving the slide stops the race; coming back starts again from the lobby. */
+function RaceScreen() {
+  return (
+    <Suspense fallback={null}>
+      <HostView />
+    </Suspense>
+  );
+}
+
 /** Area below the slide heading where the editor and full-width demos live. */
 const STAGE = 'absolute inset-x-6 bottom-6 top-[8.5rem]';
 
@@ -48,6 +172,13 @@ export function Presentation() {
   const room = useHostRoom();
   const [index, setIndex] = useState(readSlideFromHash);
   const slide = SLIDES[index];
+  const settingsPushState = room.presentation.settingsPush;
+  const settingsPush = useMemo(() => settingsFromPush(settingsPushState), [settingsPushState]);
+  // The hidden editor keeps the last editor slide's code until another editor slide is shown.
+  const [editorSetup, setEditorSetup] = useState<EditorSetup>(() => slide.editor ?? BANG_BANG_EDITOR);
+  useEffect(() => {
+    if (slide.editor) setEditorSetup(slide.editor);
+  }, [slide]);
 
   const go = useCallback((delta: number) => {
     setIndex((current) => Math.max(0, Math.min(SLIDES.length - 1, current + delta)));
@@ -57,9 +188,34 @@ export function Presentation() {
     window.history.replaceState(null, '', `#${index + 1}`);
   }, [index]);
 
+  // Typing a slide number into the URL jumps there.
   useEffect(() => {
-    if (slide.opensSubmissions && !room.presentation.submissionsOpen) {
-      room.updatePresentation({ ...room.presentation, submissionsOpen: true });
+    const onHashChange = () => setIndex(readSlideFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Applied once each time a slide is reached, after the room's saved state has loaded,
+  // so manual changes in the presenter panel stick until the next slide.
+  const appliedSlideRef = useRef<string>();
+  useEffect(() => {
+    if (!room.ready || appliedSlideRef.current === slide.id) return;
+    appliedSlideRef.current = slide.id;
+    const { presentation } = room;
+    const next = { ...presentation };
+    if (slide.opensSubmissions) next.submissionsOpen = true;
+    if (slide.closesSubmissions) next.submissionsOpen = false;
+    if (slide.unlocksHelpers) next.lockedHelpers = presentation.lockedHelpers.filter((id) => !slide.unlocksHelpers!.includes(id));
+    // Reaching a slide moves the checkpoint forward; going back leaves it.
+    if (slide.checkpointId) next.checkpointId = slide.checkpointId;
+    if (slide.settingsPush) next.settingsPush = slide.settingsPush;
+    if (
+      next.submissionsOpen !== presentation.submissionsOpen ||
+      next.checkpointId !== presentation.checkpointId ||
+      next.lockedHelpers.join() !== presentation.lockedHelpers.join() ||
+      next.settingsPush?.id !== presentation.settingsPush?.id
+    ) {
+      room.updatePresentation(next);
     }
   }, [slide, room]);
 
@@ -96,17 +252,19 @@ export function Presentation() {
       >
         <App
           embedded
-          examples={PRESENTATION_EXAMPLES}
-          storageNamespace="presentation:"
+          examples={editorSetup.examples}
+          storageNamespace={editorSetup.storageNamespace}
           lockedHelpers={room.presentation.lockedHelpers}
+          settingsPush={settingsPush}
           editorFontSize={16}
           active={Boolean(slide.editor)}
         />
       </div>
 
-      <div className="absolute right-6 top-6 z-20 flex items-start gap-3">
+      {/* Full-screen slides like the race show the room code themselves; keep the controls out of their way. */}
+      <div className={`absolute z-20 flex items-start gap-3 ${slide.ownsChrome ? 'left-4 top-[7.5rem]' : 'right-6 top-6'}`}>
         <DeckNav index={index} total={SLIDES.length} onGo={go} room={room} />
-        {slide.id === 'title' ? null : <JoinBadge room={room} />}
+        {slide.id === 'title' || slide.ownsChrome ? null : <JoinBadge room={room} />}
       </div>
     </div>
   );
@@ -197,6 +355,21 @@ function PresenterPanel({ room }: { room: HostRoom }) {
           Submissions open
         </Toggle>
       </div>
+      <label className="mt-3 block border-t-[3px] border-[#1d1b2e] pt-3">
+        <span className="mb-1 block text-sm opacity-60">Catch up to presenter</span>
+        <select
+          value={presentation.checkpointId ?? ''}
+          onChange={(event) => updatePresentation({ ...presentation, checkpointId: event.target.value || undefined })}
+          className="w-full rounded-lg border-[3px] border-[#1d1b2e] bg-white px-2 py-1 text-sm"
+        >
+          <option value="">Off</option>
+          {checkpointExamples.map((example) => (
+            <option key={example.id} value={example.id}>
+              {example.title}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="mt-3 border-t-[3px] border-[#1d1b2e] pt-3">
         <div className="mb-1 text-sm opacity-60">Toolbox players can see</div>
         {toolboxSnippets.map((snippet) => {
@@ -275,6 +448,45 @@ function TitleSlide({ room }: { room: HostRoom }) {
           </div>
           <div className="mt-6 text-xl font-black opacity-70">
             {connected === 0 ? 'Waiting for the first driver…' : `${connected} ${connected === 1 ? 'driver has' : 'drivers have'} joined`}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+const CONTACTS = [
+  { label: 'Email', value: 'hi@adalie.me', href: 'mailto:hi@adalie.me', color: sky },
+  { label: 'Bluesky', value: '@adalie.me', href: 'https://bsky.app/profile/adalie.me', color: mint },
+  { label: 'Website', value: 'adalie.me', href: 'https://adalie.me', color: sun },
+];
+
+function ThanksSlide() {
+  return (
+    <>
+      <div className="absolute inset-0">
+        <DemoRace scale={11} seed={142} />
+      </div>
+      <div className="absolute inset-0 flex items-center justify-center p-10">
+        <div className={`deck-pop w-[min(56rem,100%)] px-12 py-10 text-center ${panel}`} style={{ animationDelay: '150ms' }}>
+          <h1 className="text-8xl font-black leading-none">Thank you!</h1>
+          <p className="mt-4 inline-block -rotate-1 rounded-xl border-[3px] border-[#1d1b2e] px-4 py-1 text-3xl font-black" style={{ background: sun }}>
+            Keep tuning, and keep in touch
+          </p>
+          <div className="mt-8 grid gap-3">
+            {CONTACTS.map((contact) => (
+              <a
+                key={contact.label}
+                href={contact.href}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-between gap-4 rounded-2xl border-[3px] border-[#1d1b2e] px-6 py-3 shadow-[4px_4px_0_#1d1b2e]"
+                style={{ background: contact.color }}
+              >
+                <span className="text-2xl font-black opacity-70">{contact.label}</span>
+                <span className="text-4xl font-black">{contact.value}</span>
+              </a>
+            ))}
           </div>
         </div>
       </div>

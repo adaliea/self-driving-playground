@@ -25,6 +25,9 @@ export const starterExample: ControllerExample = {
 // center to center, and cars are about 4.6 m long.
 const FOLLOW_DISTANCE = 30; // meters
 
+// The lane the car starts in. Lanes are numbered 0, 1, 2 from the left.
+let homeLane: number | undefined;
+
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   // The closest car ahead in your lane, or undefined if the lane is clear.
   const lead = closestVehicleAhead(input.vehicles, input.laneLines);
@@ -38,13 +41,170 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     motor = 0;
   }
 
-  // How far the lane center is from you, in meters (positive is to your right).
-  const lane = analyzeLane(input.laneLines);
+  // Remember the lane you start in, and keep steering for it even after drifting.
+  if (homeLane === undefined) {
+    homeLane = input.ego.laneIndex;
+  }
+  // How far that lane's center is from you, in meters (positive is to your right).
+  const lane = analyzeLane(input.laneLines, homeLane - input.ego.laneIndex);
   const steering = lane.centerOffset * 0.3;
 
   return { motor, steering };
 }`,
 };
+
+/** The starter after the talk's first fix: brake hard when far too close. */
+export const brakingStarterExample: ControllerExample = {
+  ...starterExample,
+  id: 'starter-braking',
+  title: 'Starter: bang-bang with braking',
+  description: 'The starter plus a hard brake when the car ahead is far too close.',
+  code: starterExample.code
+    .replace(
+      'const FOLLOW_DISTANCE = 30; // meters\n',
+      'const FOLLOW_DISTANCE = 30; // meters\n// Brake hard when the car ahead is closer than this.\nconst TOO_CLOSE_DISTANCE = 15; // meters\n',
+    )
+    .replace(
+      '    motor = 0;\n  }\n',
+      '    motor = 0;\n  }\n  if (closestVehicleDistance < TOO_CLOSE_DISTANCE) {\n    motor = -1;\n  }\n',
+    ),
+};
+
+/**
+ * "Catch up to presenter" checkpoint for the PID step: the braking starter, with
+ * a TODO where the bang-bang rule should become a PID loop.
+ */
+export const pidCheckpointExample: ControllerExample = {
+  id: 'checkpoint-pid',
+  title: 'Checkpoint: ready for a PID loop',
+  description: 'Hard braking added, with steps for replacing the bang-bang rule with a PID loop.',
+  code: brakingStarterExample.code.replace(
+    '  // Bang-bang control: one of two fixed commands, nothing in between.\n',
+    `  // Bang-bang control: one of two fixed commands, nothing in between.
+  // TODO: Replace this with a PID loop on the distance to the closest vehicle:
+  //   1. Delete \`let motor = 0.5;\` and both if-blocks below.
+  //   2. Type \`let motor = \`, then Toolbox → PID Controller Object → Insert usage.
+`,
+  ),
+};
+
+/**
+ * "What I came up with": a tuned distance PID with spacing that grows with speed.
+ * Also a catch-up checkpoint, and where the steering feedforward demo starts.
+ */
+export const tunedFollowingExample: ControllerExample = {
+  id: 'checkpoint-tuned-following',
+  title: 'Checkpoint: what I came up with',
+  description: 'A tuned distance PID that follows close in slow traffic and leaves more room at speed.',
+  code: `// Your car runs this function about 45 times a second. It reads the sensors
+// in \`input\` and returns two commands, each from -1 to 1:
+//   motor:    1 = full throttle, 0 = coast, -1 = full brake
+//   steering: -1 = full left, 1 = full right
+
+// Follow close in slow traffic and leave more room at speed: a car length or so,
+// plus about one second of travel. Distances are center to center.
+const MIN_DISTANCE = 7; // meters
+const FOLLOW_TIME = 1.0; // seconds
+
+const distancePid = createPidController({
+  kp: 0.1,
+  ki: 0.01,
+  kd: 0.3,
+  outputMin: -1,
+  // Also a speed limit: 0.75 motor balances drag at about 38 m/s.
+  outputMax: 0.75,
+  // Stops I from building up while the lane ahead is clear.
+  integralMin: -20,
+  integralMax: 20,
+});
+
+// The lane the car starts in. Lanes are numbered 0, 1, 2 from the left.
+let homeLane: number | undefined;
+
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  // The closest car ahead in your lane, or undefined if the lane is clear.
+  const lead = closestVehicleAhead(input.vehicles, input.laneLines);
+  // How far ahead it is, counting anything past 100 m (or nothing at all) as 100 m.
+  const closestVehicleDistance = lead ? Math.min(lead.relativeY, 100) : 100;
+
+  const targetDistance = MIN_DISTANCE + FOLLOW_TIME * input.ego.speed;
+  graph('distance to closest vehicle', closestVehicleDistance, 'm');
+  graph('target distance', targetDistance, 'm');
+
+  // Error = distance to the car ahead − the distance you want. Positive means too far back.
+  const motor = distancePid.update(closestVehicleDistance - targetDistance, input.dt);
+
+  // Remember the lane you start in, and keep steering for it even after drifting.
+  if (homeLane === undefined) {
+    homeLane = input.ego.laneIndex;
+  }
+  // How far that lane's center is from you, in meters (positive is to your right).
+  const lane = analyzeLane(input.laneLines, homeLane - input.ego.laneIndex);
+  const steering = lane.centerOffset * 0.3;
+
+  return { motor, steering };
+}`,
+};
+
+const P_STEERING = '  const steering = lane.centerOffset * 0.3;';
+
+/** "Catch up to presenter" for the steering PID step: the tuned following code, with a TODO on steering. */
+export const steeringPidCheckpointExample: ControllerExample = {
+  id: 'checkpoint-steering-pid',
+  title: 'Checkpoint: ready for a steering PID',
+  description: 'Tuned following, with steps for replacing the fixed steering multiplier with a PID.',
+  code: tunedFollowingExample.code.replace(
+    P_STEERING,
+    `  // TODO: Steer with a PID instead of a fixed multiplier:
+  //   1. Select \`lane.centerOffset * 0.3\` below.
+  //   2. Toolbox → PID Controller Object → Insert usage.
+  //   3. Tune lanePid. Start with kd, then kp.
+${P_STEERING}`,
+  ),
+};
+
+const TUNED_LANE_PID = `// Error = distance to the lane center, in m. Positive means the center is to your right.
+const lanePid = createPidController({
+  kp: 0.5,
+  ki: 0,
+  kd: 0.1,
+  outputMin: -1,
+  outputMax: 1,
+});
+
+`;
+
+/** "What I came up with" for steering: a tuned lane PID that still wobbles in curves. */
+export const tunedSteeringExample: ControllerExample = {
+  id: 'checkpoint-tuned-steering',
+  title: 'Checkpoint: tuned steering PID',
+  description: 'Tuned following and a tuned lane PID. Still drifts a little in curves.',
+  code: tunedFollowingExample.code
+    .replace('export function autopilot', `${TUNED_LANE_PID}export function autopilot`)
+    .replace(P_STEERING, '  const steering = lanePid.update(lane.centerOffset, input.dt);'),
+};
+
+/** Ready to race: the tuned steering PID plus steering feedforward for the curves. */
+export const raceReadyExample: ControllerExample = {
+  id: 'checkpoint-race-ready',
+  title: 'Checkpoint: ready to race',
+  description: 'Tuned following and steering, with steering feedforward for the curves.',
+  code: tunedSteeringExample.code.replace(
+    '  const steering = lanePid.update(lane.centerOffset, input.dt);',
+    `  // Feedforward turns with the road; the PID only corrects the drift.
+  const steering = lanePid.update(lane.centerOffset, input.dt) +
+    steeringFeedforward(lane.curvature, input.ego.speed);`,
+  ),
+};
+
+/** Checkpoints the presenter can send everyone to, by id. */
+export const checkpointExamples: ControllerExample[] = [
+  pidCheckpointExample,
+  tunedFollowingExample,
+  steeringPidCheckpointExample,
+  tunedSteeringExample,
+  raceReadyExample,
+];
 
 export const controllerExamples: ControllerExample[] = [
   {
@@ -74,8 +234,15 @@ const speedPid = createPidController({
   integralMax: 14,
 });
 
+// The lane the car starts in. Lanes are numbered 0, 1, 2 from the left.
+let homeLane: number | undefined;
+
 export function autopilot(input: AutopilotInput): AutopilotOutput {
-  const lane = analyzeLane(input.laneLines);
+  // Remember the lane you start in, and keep steering for it even after drifting.
+  if (homeLane === undefined) {
+    homeLane = input.ego.laneIndex;
+  }
+  const lane = analyzeLane(input.laneLines, homeLane - input.ego.laneIndex);
   // Heading says where the offset is heading next; weighting it looks ahead about 8 m.
   const laneError = lane.centerOffset + lane.heading * 8;
   const steering = lanePid.update(laneError, input.dt);
@@ -94,8 +261,15 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     id: 'p-only-lane',
     title: 'P-only lane keeping',
     description: 'Simple proportional steering. Good for showing steady-state error and oscillation.',
-    code: `export function autopilot(input: AutopilotInput): AutopilotOutput {
-  const lane = analyzeLane(input.laneLines);
+    code: `// The lane the car starts in. Lanes are numbered 0, 1, 2 from the left.
+let homeLane: number | undefined;
+
+export function autopilot(input: AutopilotInput): AutopilotOutput {
+  // Remember the lane you start in, and keep steering for it even after drifting.
+  if (homeLane === undefined) {
+    homeLane = input.ego.laneIndex;
+  }
+  const lane = analyzeLane(input.laneLines, homeLane - input.ego.laneIndex);
   const steering = lane.centerOffset * 0.36 + lane.heading * 3;
 
   return {
@@ -128,8 +302,15 @@ const speedPid = createPidController({
   integralMax: 14,
 });
 
+// The lane the car starts in. Lanes are numbered 0, 1, 2 from the left.
+let homeLane: number | undefined;
+
 export function autopilot(input: AutopilotInput): AutopilotOutput {
-  const lane = analyzeLane(input.laneLines);
+  // Remember the lane you start in, and keep steering for it even after drifting.
+  if (homeLane === undefined) {
+    homeLane = input.ego.laneIndex;
+  }
+  const lane = analyzeLane(input.laneLines, homeLane - input.ego.laneIndex);
   const steering = lanePid.update(lane.centerOffset + lane.heading * 4, input.dt) +
     steeringFeedforward(lane.curvature, input.ego.speed);
   const targetSpeed = 28;
@@ -166,8 +347,15 @@ const speedPid = createPidController({
   integralMax: 16,
 });
 
+// The lane the car starts in. Lanes are numbered 0, 1, 2 from the left.
+let homeLane: number | undefined;
+
 export function autopilot(input: AutopilotInput): AutopilotOutput {
-  const lane = analyzeLane(input.laneLines);
+  // Remember the lane you start in, and keep steering for it even after drifting.
+  if (homeLane === undefined) {
+    homeLane = input.ego.laneIndex;
+  }
+  const lane = analyzeLane(input.laneLines, homeLane - input.ego.laneIndex);
   const steering = lanePid.update(lane.centerOffset + lane.heading * 4, input.dt) +
     steeringFeedforward(lane.curvature, input.ego.speed);
   const targetSpeed = adaptiveCruiseTargetSpeed(input, 30);
@@ -198,8 +386,15 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
   integralMax: 2,
 });
 
+// The lane the car starts in. Lanes are numbered 0, 1, 2 from the left.
+let homeLane: number | undefined;
+
 export function autopilot(input: AutopilotInput): AutopilotOutput {
-  const lane = analyzeLane(input.laneLines);
+  // Remember the lane you start in, and keep steering for it even after drifting.
+  if (homeLane === undefined) {
+    homeLane = input.ego.laneIndex;
+  }
+  const lane = analyzeLane(input.laneLines, homeLane - input.ego.laneIndex);
   const steering = lanePid.update(lane.centerOffset + lane.heading * 4, input.dt) +
     steeringFeedforward(lane.curvature, input.ego.speed);
 
@@ -294,9 +489,16 @@ export function autopilot(input: AutopilotInput): AutopilotOutput {
     description: 'Intentionally unstable. Useful for showing too much gain and delayed correction.',
     code: `let phase = 0;
 
+// The lane the car starts in. Lanes are numbered 0, 1, 2 from the left.
+let homeLane: number | undefined;
+
 export function autopilot(input: AutopilotInput): AutopilotOutput {
   phase += input.dt * 7.5;
-  const lane = analyzeLane(input.laneLines);
+  // Remember the lane you start in, and keep steering for it even after drifting.
+  if (homeLane === undefined) {
+    homeLane = input.ego.laneIndex;
+  }
+  const lane = analyzeLane(input.laneLines, homeLane - input.ego.laneIndex);
   const steering = lane.centerOffset * 0.72 + Math.sin(phase) * 0.72;
 
   return {

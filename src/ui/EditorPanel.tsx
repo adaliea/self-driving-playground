@@ -1,5 +1,5 @@
 import Editor, { loader, type BeforeMount, type OnMount } from '@monaco-editor/react';
-import { LockKeyhole, RotateCcw } from 'lucide-react';
+import { FastForward, LockKeyhole, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { editor } from 'monaco-editor/esm/vs/editor/editor.api';
 import * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
@@ -310,6 +310,8 @@ interface EditorPanelProps {
   renderToolbox: (insertAtCursor: (code: string, setup?: string[]) => void) => ReactNode;
   onCodeChange: (code: string) => void;
   onLoadExample: (id: string) => void;
+  /** Offers to replace the code with the presenter's latest checkpoint. */
+  catchUp?: { title: string; onClick: () => void };
 }
 
 export function EditorPanel({
@@ -325,13 +327,12 @@ export function EditorPanel({
   renderToolbox,
   onCodeChange,
   onLoadExample,
+  catchUp,
 }: EditorPanelProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const editorOpenerRef = useRef<monacoEditor.IDisposable | null>(null);
   const runtimeHoverDisposablesRef = useRef<monacoEditor.IDisposable[]>([]);
   const pendingRevealRef = useRef<EditorLocation>();
-  // Until someone clicks into the code, the cursor sits at line 1, so inserts append instead.
-  const hasPlacedCursorRef = useRef(false);
   const toolboxSourceRef = useRef(toolboxSource);
   toolboxSourceRef.current = toolboxSource;
   const [activeFile, setActiveFile] = useState<ActiveEditorFile>('autopilot');
@@ -381,10 +382,6 @@ export function EditorPanel({
 
   const onMount: OnMount = (editorInstance) => {
     editorRef.current = editorInstance;
-    editorInstance.onDidFocusEditorText(() => {
-      const model = editorInstance.getModel();
-      if (model && editorFileForUri(model.uri) === 'autopilot') hasPlacedCursorRef.current = true;
-    });
     editorOpenerRef.current?.dispose();
     for (const disposable of runtimeHoverDisposablesRef.current) disposable.dispose();
     runtimeHoverDisposablesRef.current = [];
@@ -444,18 +441,20 @@ export function EditorPanel({
     const currentEditor = editorRef.current;
     const model = currentEditor?.getModel();
     if (!currentEditor || !model || editorFileForUri(model.uri) !== 'autopilot') return;
-    const selection = hasPlacedCursorRef.current ? currentEditor.getSelection() : null;
-    const edits = [insertionEdit(model, selection, code)];
+    // The call goes exactly at the cursor (replacing any selection), e.g. after `const motor = `.
+    const selection = currentEditor.getSelection() ?? new monacoEditor.Selection(1, 1, 1, 1);
+    const edits: editor.IIdentifiedSingleEditOperation[] = [{ range: selection, text: code, forceMoveMarkers: true }];
     const missingSetup = setup.filter((block) => !declaresSameName(model.getValue(), block));
     if (missingSetup.length > 0) {
       const setupText = `${missingSetup.join('\n\n')}\n\n`;
       const autopilotLine = model.findMatches('^export\\s+function\\s+autopilot\\b', false, true, true, null, false)[0]
         ?.range.startLineNumber ?? 1;
-      if (selection && selection.startLineNumber <= autopilotLine) {
-        // The cursor is already above autopilot, so the setup can go right where the code goes.
-        edits[0] = { ...edits[0], text: `${setupText}${edits[0].text}` };
+      const setupRange = new monacoEditor.Range(autopilotLine, 1, autopilotLine, 1);
+      if (monacoEditor.Range.areIntersectingOrTouching(selection, setupRange)) {
+        // The cursor is right where the setup goes; put both there in one edit.
+        edits[0] = { ...edits[0], text: `${setupText}${code}` };
       } else {
-        edits.push({ range: new monacoEditor.Range(autopilotLine, 1, autopilotLine, 1), text: setupText, forceMoveMarkers: true });
+        edits.push({ range: setupRange, text: setupText, forceMoveMarkers: true });
       }
     }
     currentEditor.executeEdits(
@@ -512,6 +511,17 @@ export function EditorPanel({
           ) : (
             <>
               {renderToolbox(insertAtCursor)}
+              {catchUp ? (
+                <button
+                  type="button"
+                  onClick={catchUp.onClick}
+                  title={`Replace your code with "${catchUp.title}"`}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md bg-signal px-2 text-xs font-medium text-signal-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <FastForward size={12} aria-hidden="true" />
+                  Catch up to presenter
+                </button>
+              ) : null}
               {examples.length === 1 ? (
                 <button
                   type="button"
@@ -616,46 +626,6 @@ export function EditorPanel({
 function declaresSameName(source: string, block: string): boolean {
   const name = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(block)?.[1];
   return name !== undefined && new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, '\\$')}\\b`).test(source);
-}
-
-/**
- * Builds the edit that puts a toolbox snippet at the cursor, replacing any
- * selection. The snippet gets its own lines, indented like the cursor's line.
- * Without a cursor it goes at the end of the file.
- */
-function insertionEdit(
-  model: editor.ITextModel,
-  selection: monacoEditor.Selection | null,
-  code: string,
-): editor.IIdentifiedSingleEditOperation {
-  if (!selection) {
-    const lastLine = model.getLineCount();
-    const end = model.getLineMaxColumn(lastLine);
-    const separator = model.getValue().trim() ? '\n\n' : '';
-    return {
-      range: new monacoEditor.Range(lastLine, end, lastLine, end),
-      text: `${separator}${code}\n`,
-      forceMoveMarkers: true,
-    };
-  }
-
-  const line = model.getLineContent(selection.startLineNumber);
-  const indent = /^\s*/.exec(line)![0];
-  const before = line.slice(0, selection.startColumn - 1);
-  const after = model.getLineContent(selection.endLineNumber).slice(selection.endColumn - 1);
-  const startsOwnLine = !before.trim();
-  const body = code
-    .split('\n')
-    .map((codeLine, index) => (codeLine === '' || (index === 0 && !startsOwnLine) ? codeLine : indent + codeLine))
-    .join('\n');
-  return {
-    // On a blank or indent-only stretch, replace the leading whitespace so the indent isn't doubled.
-    range: startsOwnLine
-      ? new monacoEditor.Range(selection.startLineNumber, 1, selection.endLineNumber, selection.endColumn)
-      : selection,
-    text: `${startsOwnLine ? '' : `\n${indent}`}${body}${after.trim() ? `\n${/^\s/.test(after) ? '' : indent}` : ''}`,
-    forceMoveMarkers: true,
-  };
 }
 
 function EditorTab({ active, onSelect, label, readOnly = false }: { active: boolean; onSelect: () => void; label: string; readOnly?: boolean }) {

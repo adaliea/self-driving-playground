@@ -23,6 +23,18 @@ export interface PresentationState {
   lockedHelpers: string[];
   /** Whether players may submit drivers to race. Closed until the presenter opens racing. */
   submissionsOpen: boolean;
+  /** Example id players can "Catch up to presenter" with, replacing their code. */
+  checkpointId?: string;
+  /**
+   * Settings each player applies once, e.g. turning "Steer for me" off when the talk
+   * gets to steering. Players can change them back; a new `id` applies again.
+   */
+  settingsPush?: SettingsPush;
+}
+
+export interface SettingsPush {
+  id: string;
+  steerAssist?: boolean;
 }
 
 /** New rooms start with the ready-made answers locked and racing closed, so the presenter can reveal them. */
@@ -247,12 +259,34 @@ export function parseHostMessage(value: unknown): HostToServerMessage | undefine
   }
 }
 
+/** The settings a push changes, in the shape the app's settings use. */
+export function settingsFromPush(push: SettingsPush | undefined): { id: string; settings: { steerAssist?: boolean } } | undefined {
+  if (!push) return undefined;
+  const settings: { steerAssist?: boolean } = {};
+  if (push.steerAssist !== undefined) settings.steerAssist = push.steerAssist;
+  return { id: push.id, settings };
+}
+
 export function parsePresentationState(value: unknown): PresentationState | undefined {
   if (!isRecord(value) || !Array.isArray(value.lockedHelpers) || value.lockedHelpers.length > MAX_LOCKED_HELPERS) return undefined;
-  const lockedHelpers = value.lockedHelpers.filter(
-    (id): id is string => typeof id === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(id),
-  );
-  return { lockedHelpers: [...new Set(lockedHelpers)], submissionsOpen: value.submissionsOpen === true };
+  const lockedHelpers = value.lockedHelpers.filter((id): id is string => isSlug(id));
+  return {
+    lockedHelpers: [...new Set(lockedHelpers)],
+    submissionsOpen: value.submissionsOpen === true,
+    checkpointId: isSlug(value.checkpointId) ? value.checkpointId : undefined,
+    settingsPush:
+      isRecord(value.settingsPush) && isSlug(value.settingsPush.id)
+        ? {
+            id: value.settingsPush.id,
+            steerAssist: typeof value.settingsPush.steerAssist === 'boolean' ? value.settingsPush.steerAssist : undefined,
+          }
+        : undefined,
+  };
+}
+
+/** Short lowercase ids such as toolbox snippet and example ids. */
+function isSlug(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(value);
 }
 
 function parseRoundState(value: unknown): RoundState | undefined {

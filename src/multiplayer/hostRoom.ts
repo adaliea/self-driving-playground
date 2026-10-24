@@ -17,6 +17,8 @@ export interface HostRoom {
   status: ConnectionStatus;
   players: PlayerSummary[];
   presentation: PresentationState;
+  /** True once the room's saved presentation state has arrived; before that, `presentation` is only the default. */
+  ready: boolean;
   updatePresentation: (next: PresentationState) => void;
   /** Closes the current room and opens a new one with a new code. */
   newRoom: () => Promise<void>;
@@ -32,6 +34,7 @@ export function useHostRoom(): HostRoom {
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [players, setPlayers] = useState<Map<string, PlayerSummary>>(new Map());
   const [presentation, setPresentation] = useState<PresentationState>(DEFAULT_PRESENTATION);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string>();
   const connectionRef = useRef<RoomConnection<ServerToHostMessage, HostToServerMessage>>();
 
@@ -41,6 +44,7 @@ export function useHostRoom(): HostRoom {
       const created = await createRoom();
       writeStoredJson(HOST_SESSION_KEY, created);
       setPlayers(new Map());
+      setReady(false);
       setSession(created);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -64,6 +68,7 @@ export function useHostRoom(): HostRoom {
           case 'room':
             setPlayers(new Map(message.players.map((player) => [player.id, player])));
             setPresentation({ ...DEFAULT_PRESENTATION, ...message.presentation });
+            setReady(true);
             break;
           case 'player':
             setPlayers((current) => new Map(current).set(message.player.id, message.player));
@@ -95,6 +100,7 @@ export function useHostRoom(): HostRoom {
     status,
     players: [...players.values()],
     presentation,
+    ready,
     updatePresentation,
     newRoom,
     error,

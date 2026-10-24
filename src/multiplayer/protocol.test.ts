@@ -6,6 +6,7 @@ describe('presentation state', () => {
     expect(parsePresentationState({ lockedHelpers: ['fastest-lane', 'fastest-lane', 'Bad Id', 7, 'lateral-velocity'] })).toEqual({
       lockedHelpers: ['fastest-lane', 'lateral-velocity'],
       submissionsOpen: false,
+      checkpointId: undefined,
     });
   });
 
@@ -16,9 +17,12 @@ describe('presentation state', () => {
   });
 
   it('parses a host presentation message', () => {
-    expect(parseHostMessage({ type: 'presentation', state: { lockedHelpers: ['clamp'], submissionsOpen: true } })).toEqual({
+    expect(
+      parseHostMessage({ type: 'presentation', state: { lockedHelpers: ['clamp'], submissionsOpen: true, checkpointId: 'checkpoint-pid' } }),
+    ).toEqual({
       type: 'presentation',
-      state: { lockedHelpers: ['clamp'], submissionsOpen: true },
+      state: { lockedHelpers: ['clamp'], submissionsOpen: true, checkpointId: 'checkpoint-pid' },
     });
+    expect(parsePresentationState({ lockedHelpers: [], checkpointId: '<script>' })?.checkpointId).toBeUndefined();
   });
 });

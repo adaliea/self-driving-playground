@@ -3,7 +3,15 @@ import ts from 'typescript';
 import { compileUserCode } from '../sandbox/compiler';
 import { driverFactoryBody } from '../sandbox/runnerSource';
 import { DEFAULT_SETTINGS, FIXED_TIMESTEP, Simulation } from '../simulation';
-import { starterExample } from './examples';
+import {
+  brakingStarterExample,
+  pidCheckpointExample,
+  raceReadyExample,
+  starterExample,
+  steeringPidCheckpointExample,
+  tunedFollowingExample,
+  tunedSteeringExample,
+} from './examples';
 import { clampImplementation, pidControllerImplementation, toolboxLibrarySource, visibleToolboxSource } from './library';
 import { snippetInsertion, toolboxSnippets } from './snippets';
 
@@ -84,6 +92,26 @@ describe('talk starter', () => {
     expect(output.motor).toBe(0.5);
     expect(starterExample.recommendedSettings).toMatchObject({ steerAssist: true });
   });
+
+  it('builds the braking and catch-up checkpoints on top of it', () => {
+    expect(brakingStarterExample.code).toContain('if (closestVehicleDistance < TOO_CLOSE_DISTANCE) {\n    motor = -1;');
+    expect(pidCheckpointExample.code).toContain('TOO_CLOSE_DISTANCE');
+    expect(pidCheckpointExample.code).toContain('// TODO: Replace this with a PID loop');
+    for (const example of [brakingStarterExample, pidCheckpointExample]) expect(compileUserCode(example.code).ok).toBe(true);
+  });
+
+  it('builds each steering checkpoint from the one before it', () => {
+    const chain = [
+      [tunedFollowingExample, steeringPidCheckpointExample, '// TODO: Steer with a PID'],
+      [tunedFollowingExample, tunedSteeringExample, 'lanePid.update(lane.centerOffset, input.dt)'],
+      [tunedSteeringExample, raceReadyExample, 'steeringFeedforward(lane.curvature, input.ego.speed)'],
+    ] as const;
+    for (const [base, next, added] of chain) {
+      expect(next.code).not.toBe(base.code);
+      expect(next.code).toContain(added);
+      expect(compileUserCode(next.code).ok).toBe(true);
+    }
+  });
 });
 
 describe('lateral velocity steering', () => {
@@ -116,8 +144,9 @@ describe('PID snippet naming', () => {
     expect(insertion.usage).toContain(`${third}.update(`);
   });
 
-  it('reuses the starter distance variable and declares one otherwise', () => {
-    expect(snippetInsertion(pid, 'const closestVehicleDistance = 100;').usage).not.toContain('const closestVehicleDistance');
-    expect(snippetInsertion(pid, '').usage).toContain('const closestVehicleDistance =');
+  it('inserts just the update call, using targetDistance when the code has one', () => {
+    expect(snippetInsertion(pid, '').usage).toBe('distancePid.update(closestVehicleDistance - 30, input.dt)');
+    expect(snippetInsertion(pid, 'const targetDistance = 20;').usage).toBe('distancePid.update(closestVehicleDistance - targetDistance, input.dt)');
+    expect(snippetInsertion(pid, 'const distancePid = 1;\nconst lane = 2;').usage).toBe('lanePid.update(lane.centerOffset, input.dt)');
   });
 });

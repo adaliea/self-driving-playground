@@ -159,7 +159,7 @@ The toolbox panel lists helpers from a virtual `autopilot-toolbox.ts` file, each
 - adaptive cruise target speed (`adaptiveCruiseTargetSpeed`)
 - stateful fastest-lane chooser (`createLaneChooser`)
 
-**Insert usage** puts a short example at the editor cursor. Declarations that must keep state between ticks, such as a PID controller, go above `autopilot` instead, unless the file already declares them. The implementations stay out of `Autopilot.ts`, but Monaco can still navigate to them with Go to Definition / Ctrl-click, opening the read-only toolbox file at the definition.
+**Insert usage** puts the helper's call at the editor cursor, replacing any selection, so you can type `const steering = ` and insert the right-hand side. Helpers that keep state between ticks (the PID controller and the lane chooser) also add their declaration above `autopilot`, unless the file already declares it. The implementations stay out of `Autopilot.ts`, but Monaco can still navigate to them with Go to Definition / Ctrl-click, opening the read-only toolbox file at the definition.
 
 ### PID derivative smoothing
 

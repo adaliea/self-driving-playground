@@ -290,6 +290,9 @@ export class RaceEngine {
         return;
       }
 
+      // Reload every driver so code that remembers things between ticks (a starting lane,
+      // a PID's integral) starts each round fresh, like a solo run does.
+      for (const driver of candidates) driver.loadedVersion = undefined;
       const loaded = await Promise.all(candidates.map((driver) => this.prepareSandbox(driver)));
       const ready = candidates.filter((_, index) => loaded[index]);
       if (this.disposed) return;

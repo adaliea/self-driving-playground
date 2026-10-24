@@ -50,7 +50,11 @@ interface AppProps {
    * browser. With a single example, the editor offers "Start over" instead of a list.
    */
   examples?: ControllerExample[];
-  /** Prefix for saved code and settings, so different modes don't overwrite each other. */
+  /**
+   * Prefix for saved code and settings, so different modes don't overwrite each other.
+   * Changing it saves the current code and loads the code saved under the new prefix
+   * (or the first example); settings stay as they are.
+   */
   storageNamespace?: string;
   /** Toolbox snippet ids the presenter has locked. */
   lockedHelpers?: readonly string[];
@@ -60,6 +64,10 @@ interface AppProps {
   editorFontSize?: number;
   /** False while hidden: skips drawing and telemetry updates. A running simulation keeps going. */
   active?: boolean;
+  /** The presenter's latest checkpoint, offered as "Catch up to presenter". */
+  catchUp?: ControllerExample;
+  /** Settings to apply once per `id` (remembered in this browser), such as turning an assist off. */
+  settingsPush?: { id: string; settings: Partial<PlaygroundSettings> };
 }
 
 const NO_LOCKED_HELPERS: readonly string[] = [];
@@ -72,6 +80,8 @@ function App({
   embedded = false,
   editorFontSize,
   active = true,
+  catchUp,
+  settingsPush,
 }: AppProps = {}) {
   const [baseSettings] = useState<PlaygroundSettings>(() => ({ ...DEFAULT_SETTINGS, ...examples[0]?.recommendedSettings }));
   const [initialController] = useState(() => loadInitialController(examples, storageNamespace));
@@ -139,8 +149,8 @@ function App({
 
   useEffect(() => {
     const flushStoredState = () => {
-      saveUserCode(storageNamespace, codeRef.current);
-      saveSettings(storageNamespace, settingsRef.current);
+      saveUserCode(namespaceRef.current, codeRef.current);
+      saveSettings(namespaceRef.current, settingsRef.current);
     };
     window.addEventListener('pagehide', flushStoredState);
     window.addEventListener('beforeunload', flushStoredState);
@@ -355,6 +365,21 @@ function App({
     setSelectedExampleId(findControllerExampleIdForCode(examples, nextCode) ?? CUSTOM_CONTROLLER_ID);
   }, [examples]);
 
+  useEffect(() => {
+    if (!settingsPush || hasAppliedSettingsPush(storageNamespace, settingsPush.id)) return;
+    markSettingsPushApplied(storageNamespace, settingsPush.id);
+    updateSettings({ ...settingsRef.current, ...settingsPush.settings });
+  }, [settingsPush, storageNamespace, updateSettings]);
+
+  const namespaceRef = useRef(storageNamespace);
+  useEffect(() => {
+    if (namespaceRef.current === storageNamespace) return;
+    saveUserCode(namespaceRef.current, codeRef.current);
+    namespaceRef.current = storageNamespace;
+    updateCode(loadInitialController(examples, storageNamespace).code);
+    resetSimulation();
+  }, [storageNamespace, examples, updateCode, resetSimulation]);
+
   const applyExample = useCallback(
     (example: ControllerExample) => {
       setSelectedExampleId(example.id);
@@ -367,7 +392,7 @@ function App({
   );
 
   const loadExample = useCallback((id: string) => {
-    const example = examples.find((candidate) => candidate.id === id);
+    const example = [...examples, ...(catchUp ? [catchUp] : [])].find((candidate) => candidate.id === id);
     if (!example) return;
     if (wouldOverwriteEditedCode(examples, codeRef.current, selectedExampleId, example.code)) {
       setPendingExampleId(example.id);
@@ -375,9 +400,9 @@ function App({
     }
 
     applyExample(example);
-  }, [applyExample, examples, selectedExampleId]);
+  }, [applyExample, catchUp, examples, selectedExampleId]);
 
-  const pendingExample = examples.find((example) => example.id === pendingExampleId);
+  const pendingExample = [...examples, ...(catchUp ? [catchUp] : [])].find((example) => example.id === pendingExampleId);
   const toolboxSource = useMemo(() => visibleToolboxSource(lockedHelpers), [lockedHelpers]);
   const unlockedSnippets = useMemo(
     () => toolboxSnippets.filter((snippet) => !lockedHelpers.includes(snippet.id)),
@@ -421,6 +446,7 @@ function App({
               renderToolbox={(insertAtCursor) => <ToolboxPanel snippets={unlockedSnippets} source={code} onInsert={insertAtCursor} />}
               onCodeChange={updateCode}
               onLoadExample={loadExample}
+              catchUp={catchUp && catchUp.code !== code ? { title: catchUp.title, onClick: () => loadExample(catchUp.id) } : undefined}
             />
           </Suspense>
         </div>
@@ -516,6 +542,27 @@ function loadStoredSettings(namespace: string, defaults: PlaygroundSettings): Pl
     };
   } catch {
     return { ...defaults };
+  }
+}
+
+const appliedPushesKey = (namespace: string) => `self-driving-playground:${namespace}applied-settings-pushes:v1`;
+
+function hasAppliedSettingsPush(namespace: string, id: string): boolean {
+  try {
+    const applied = JSON.parse(window.localStorage.getItem(appliedPushesKey(namespace)) ?? '[]') as unknown;
+    return Array.isArray(applied) && applied.includes(id);
+  } catch {
+    return false;
+  }
+}
+
+function markSettingsPushApplied(namespace: string, id: string): void {
+  try {
+    const applied = JSON.parse(window.localStorage.getItem(appliedPushesKey(namespace)) ?? '[]') as unknown;
+    const ids = Array.isArray(applied) ? applied.filter((entry): entry is string => typeof entry === 'string') : [];
+    window.localStorage.setItem(appliedPushesKey(namespace), JSON.stringify([...ids, id].slice(-20)));
+  } catch {
+    // Ignore storage errors; the push may then apply again after a reload.
   }
 }
 

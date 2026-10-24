@@ -1,7 +1,7 @@
 import { CheckCircle2, Flag, Loader2, LogOut, Send, ShieldCheck, Trophy, XCircle } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import App, { type AppTopBarContext } from '../App';
-import { starterExample } from '../toolbox';
+import { checkpointExamples, starterExample } from '../toolbox';
 import { Button } from '../ui/Button';
 import { RoomConnection, joinRoom, readStoredJson, roomSocketUrl, writeStoredJson, type ConnectionStatus } from './connection';
 import {
@@ -10,6 +10,7 @@ import {
   ROOM_CODE_LENGTH,
   isValidRoomCode,
   normalizeRoomCode,
+  settingsFromPush,
   type DriverStatusUpdate,
   type JoinRoomResponse,
   type LeaderboardEntry,
@@ -242,6 +243,8 @@ function PlayerRoom({ session, onLeave }: { session: PlayerSession; onLeave: () 
     }
   }, []);
 
+  const settingsPush = useMemo(() => settingsFromPush(state.presentation.settingsPush), [state.presentation.settingsPush]);
+
   const renderTopBar = useCallback(
     (context: AppTopBarContext) => <RaceBar session={session} state={state} context={context} onSubmit={submit} onLeave={onLeave} />,
     [session, state, submit, onLeave],
@@ -253,6 +256,8 @@ function PlayerRoom({ session, onLeave }: { session: PlayerSession; onLeave: () 
       examples={ROOM_EXAMPLES}
       storageNamespace={ROOM_STORAGE_NAMESPACE}
       lockedHelpers={state.presentation.lockedHelpers}
+      catchUp={checkpointExamples.find((example) => example.id === state.presentation.checkpointId)}
+      settingsPush={settingsPush}
     />
   );
 }
