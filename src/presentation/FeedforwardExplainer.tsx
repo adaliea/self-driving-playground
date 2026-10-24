@@ -112,7 +112,7 @@ interface RunSample {
 }
 
 /**
- * The car the way the game drives it: a lane PID (kp 0.5, kd 0.1) on the offset
+ * The car the way the game drives it: a lane PID (kp 0.3, kd 0.1) on the offset
  * from the lane center, the same steering lag, and full lock turning at 0.68 rad/s.
  */
 function simulate(feedforward: boolean): RunSample[] {
@@ -126,7 +126,7 @@ function simulate(feedforward: boolean): RunSample[] {
     // Steering is positive to the right; the car is `offset` meters left of center.
     const offsetRate = (offset - previousOffset) / DT;
     previousOffset = offset;
-    let steering = 0.5 * offset + 0.1 * offsetRate;
+    let steering = 0.3 * offset + 0.1 * offsetRate;
     if (feedforward) steering -= (SPEED * curvatureAhead(s) * FEEDFORWARD_ACCURACY) / 0.68;
     steering = Math.max(-1, Math.min(1, steering));
     actualSteering += (steering - actualSteering) * Math.min(1, DT / 0.14);

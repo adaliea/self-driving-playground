@@ -607,7 +607,7 @@ export function EditorPanel({
             fontSize,
             lineHeight: Math.round(fontSize * 1.54),
             fontLigatures: false,
-            scrollBeyondLastLine: false,
+            scrollBeyondLastLine: true,
             wordWrap: 'on',
             tabSize: 2,
             padding: { top: 14, bottom: 14 },

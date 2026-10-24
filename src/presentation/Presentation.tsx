@@ -125,9 +125,10 @@ const SLIDES: Slide[] = [
   },
   {
     id: 'before-race',
-    heading: { title: 'Before we start racing', hint: 'Fastest Lane Selection is now in your Toolbox.' },
+    heading: { title: 'Before we start racing', hint: 'Fastest Lane Selection is now in your Toolbox. Submissions are open.' },
     render: () => <BeforeRacing />,
     unlocksHelpers: ['fastest-lane'],
+    opensSubmissions: true,
     checkpointId: raceReadyExample.id,
   },
   {

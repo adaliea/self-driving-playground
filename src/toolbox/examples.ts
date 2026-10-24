@@ -165,7 +165,7 @@ ${P_STEERING}`,
 
 const TUNED_LANE_PID = `// Error = distance to the lane center, in m. Positive means the center is to your right.
 const lanePid = createPidController({
-  kp: 0.5,
+  kp: 0.3,
   ki: 0,
   kd: 0.1,
   outputMin: -1,

@@ -483,7 +483,7 @@ function fitForwardLaneCenterline(
 ): LaneCenterFit | undefined {
   const samples: LaneLineSample[] = [];
 
-  for (let y = local ? 3 : 5; y <= (local ? 21 : 56); y += local ? 2.4 : y < 25 ? 4 : 6) {
+  for (let y = local ? 3 : 5; y <= (local ? 15.5 : 56); y += local ? 2.4 : y < 25 ? 4 : 6) {
     const center = lineCenterAtY(leftSamples, rightSamples, y);
     if (center.confidence > 0.08) samples.push(center);
   }
@@ -504,8 +504,11 @@ function fitForwardLaneCenterline(
     const y = sample.y;
     const y2 = y * y;
     const distanceT = clamp((y - 5) / 51, 0, 1);
-    const distanceWeight = 1 - distanceT * 0.62;
-    const weight = clamp(sample.confidence, 0.08, 1) * distanceWeight;
+    const confidenceWeight = clamp(sample.confidence, 0.08, 1) * (1 - distanceT * 0.62);
+    // Local fits trust the road right in front of the car most: full weight at 3 m, 0.3 at 15 m.
+    const weight = local
+      ? clamp(sample.confidence, 0.08, 1) * (1 - clamp((y - 3) / 12, 0, 1) * 0.7)
+      : confidenceWeight;
 
     s0 += weight;
     s1 += weight * y;
@@ -515,7 +518,7 @@ function fitForwardLaneCenterline(
     t0 += weight * sample.x;
     t1 += weight * sample.x * y;
     t2 += weight * sample.x * y2;
-    weightTotal += weight;
+    weightTotal += confidenceWeight;
   }
 
   const solution = solve3x3([

@@ -177,8 +177,8 @@ The toolbox panel lists helpers from a virtual `autopilot-toolbox.ts` file, each
 
 ### Lane reading
 
-`analyzeLane(input.laneLines)` fits the nearest 3–21 meters of lane samples and
-estimates center offset, heading, and curvature at ego. Use this local geometry
+`analyzeLane(input.laneLines)` fits the nearest 3–15 meters of lane samples, weighting the
+closest points most, and estimates center offset, heading, and curvature at ego. Use this local geometry
 for steering so distant corner entries and exits do not advance the steering response.
 
 For a longer 5–56 meter fit, select `"preview"` when planning speed:

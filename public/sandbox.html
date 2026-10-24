@@ -342,7 +342,7 @@
                 };
                 const __fitForwardLaneCenterline = (leftSamples, rightSamples, local) => {
                   const samples = [];
-                  for (let y = local ? 3 : 5; y <= (local ? 21 : 56); y += local ? 2.4 : y < 25 ? 4 : 6) {
+                  for (let y = local ? 3 : 5; y <= (local ? 15.5 : 56); y += local ? 2.4 : y < 25 ? 4 : 6) {
                     const center = __lineCenterAtY(leftSamples, rightSamples, y);
                     if (center.confidence > 0.08) samples.push(center);
                   }
@@ -352,7 +352,10 @@
                     const y = sample.y;
                     const y2 = y * y;
                     const distanceT = __clamp((y - 5) / 51, 0, 1);
-                    const weight = __clamp(sample.confidence, 0.08, 1) * (1 - distanceT * 0.62);
+                    const confidenceWeight = __clamp(sample.confidence, 0.08, 1) * (1 - distanceT * 0.62);
+                    const weight = local
+                      ? __clamp(sample.confidence, 0.08, 1) * (1 - __clamp((y - 3) / 12, 0, 1) * 0.7)
+                      : confidenceWeight;
                     s0 += weight;
                     s1 += weight * y;
                     s2 += weight * y2;
@@ -361,7 +364,7 @@
                     t0 += weight * sample.x;
                     t1 += weight * sample.x * y;
                     t2 += weight * sample.x * y2;
-                    weightTotal += weight;
+                    weightTotal += confidenceWeight;
                   }
                   const solution = __solve3x3([[s0, s1, s2, t0], [s1, s2, s3, t1], [s2, s3, s4, t2]]);
                   if (!solution) return undefined;
