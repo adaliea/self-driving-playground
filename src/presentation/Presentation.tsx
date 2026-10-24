@@ -322,7 +322,7 @@ export function Presentation() {
       {/* Full-screen slides like the race show the room code themselves; keep the controls out of their way. */}
       <div className={`absolute z-20 flex items-start gap-3 ${slide.ownsChrome ? 'left-4 top-[7.5rem]' : 'right-6 top-6'}`}>
         <DeckNav index={index} total={SLIDES.length} onGo={go} room={room} />
-        {slide.id === 'title' || slide.ownsChrome ? null : <JoinBadge room={room} />}
+        {slide.id === 'title' || slide.id === 'thanks' || slide.ownsChrome ? null : <JoinBadge room={room} />}
       </div>
     </div>
   );
@@ -513,10 +513,13 @@ function TitleSlide({ room }: { room: HostRoom }) {
   );
 }
 
+/** `wide` links take a full row; the rest pair up two to a row. */
 const CONTACTS = [
-  { label: 'Email', value: 'hi@adalie.me', href: 'mailto:hi@adalie.me', color: sky },
-  { label: 'Bluesky', value: '@adalie.me', href: 'https://bsky.app/profile/adalie.me', color: mint },
+  { label: 'Email', value: 'hi@adalie.me', href: 'mailto:hi@adalie.me', color: sky, wide: true },
   { label: 'Website', value: 'adalie.me', href: 'https://adalie.me', color: sun },
+  { label: 'Bluesky', value: '@adalie.me', href: 'https://bsky.app/profile/adalie.me', color: mint },
+  { label: 'GitHub', value: 'adaliea', href: 'https://github.com/adaliea', color: '#c4b5fd' },
+  { label: 'LinkedIn', value: 'in/adaliea', href: 'https://www.linkedin.com/in/adaliea/', color: '#7ec8ff' },
 ];
 
 function ThanksSlide() {
@@ -531,10 +534,10 @@ function ThanksSlide() {
           <p className="mt-4 inline-block -rotate-1 rounded-xl border-[3px] border-[#1d1b2e] px-4 py-1 text-3xl font-black" style={{ background: sun }}>
             Keep tuning, and keep in touch
           </p>
-          <div className="mt-8 grid gap-3">
+          <div className="mt-8 grid grid-cols-2 gap-3">
             {[
               // The solo playground on whatever host is serving the deck, e.g. driving.adalie.me/playground.
-              { label: 'Keep practicing', value: `${joinHost()}/playground`, href: '/playground', color: '#ff7ac6' },
+              { label: 'Keep practicing', value: `${joinHost()}/playground`, href: '/playground', color: '#ff7ac6', wide: true },
               ...CONTACTS,
             ].map((contact) => (
               <a
@@ -542,11 +545,11 @@ function ThanksSlide() {
                 href={contact.href}
                 target="_blank"
                 rel="noreferrer"
-                className="flex items-center justify-between gap-4 rounded-2xl border-[3px] border-[#1d1b2e] px-6 py-3 shadow-[4px_4px_0_#1d1b2e]"
+                className={`flex items-center justify-between gap-4 rounded-2xl border-[3px] border-[#1d1b2e] px-6 py-3 shadow-[4px_4px_0_#1d1b2e] ${contact.wide ? 'col-span-2' : ''}`}
                 style={{ background: contact.color }}
               >
                 <span className="text-2xl font-black opacity-70">{contact.label}</span>
-                <span className="text-4xl font-black">{contact.value}</span>
+                <span className={`${contact.wide ? 'text-4xl' : 'text-3xl'} font-black`}>{contact.value}</span>
               </a>
             ))}
           </div>
