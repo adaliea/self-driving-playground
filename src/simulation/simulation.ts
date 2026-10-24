@@ -133,6 +133,8 @@ export interface PlayerRaceState {
   /** Separate times the player's car hit the road edge. */
   edgeHits: number;
   stalled: boolean;
+  /** Pulled off the road for the rest of the round; distance is frozen where it left. */
+  retired: boolean;
 }
 
 interface PlayerRuntime {
@@ -215,6 +217,8 @@ export class Simulation {
   private readonly trafficBehind: number;
   private readonly trafficAhead: number;
   private playerRuntimes = new Map<string, PlayerRuntime>();
+  /** Player cars removed from the road, kept so their final position still scores. */
+  private retiredVehicles = new Map<string, VehicleState>();
 
   constructor(settings: PlaygroundSettings, options: SimulationOptions = {}) {
     this.players = options.players?.length ? options.players : [DEFAULT_PLAYER];
@@ -246,6 +250,7 @@ export class Simulation {
     const rows = Math.ceil(this.players.length / laneOrder.length);
     this.vehicles = [];
     this.playerRuntimes = new Map();
+    this.retiredVehicles = new Map();
     this.players.forEach((player, index) => {
       const lane = laneOrder[index % laneOrder.length];
       const s = GRID_FRONT_S + (rows - 1 - Math.floor(index / laneOrder.length)) * GRID_ROW_SPACING;
@@ -314,6 +319,7 @@ export class Simulation {
     const windAccel = settings.wind ? this.wind.step(dt) : 0;
 
     for (const runtime of this.playerRuntimes.values()) {
+      if (this.retiredVehicles.has(runtime.id)) continue;
       const ego = this.playerVehicle(runtime.id);
       const input = runtime.lastInput ?? this.createPlayerInput(runtime.id, settings, dt);
       const user = sanitizeAutopilotOutput(rawOutputs.get(runtime.id));
@@ -479,8 +485,18 @@ export class Simulation {
         atFaultCollisions: runtime.atFaultCollisions,
         edgeHits: runtime.edgeHits,
         stalled: runtime.stallUntil > this.time,
+        retired: this.retiredVehicles.has(id),
       };
     });
+  }
+
+  /** Removes a player's car from the road for the rest of the round. Its distance stops counting up. */
+  retirePlayer(id: string): void {
+    const index = this.vehicles.findIndex((vehicle) => vehicle.id === id && vehicle.kind === 'ego');
+    if (index === -1) return;
+    const [vehicle] = this.vehicles.splice(index, 1);
+    vehicle.speed = 0;
+    this.retiredVehicles.set(id, vehicle);
   }
 
   get currentTime(): number {
@@ -547,7 +563,8 @@ export class Simulation {
   }
 
   private playerVehicle(id: string): VehicleState {
-    const vehicle = this.vehicles.find((candidate) => candidate.id === id && candidate.kind === 'ego');
+    const vehicle =
+      this.vehicles.find((candidate) => candidate.id === id && candidate.kind === 'ego') ?? this.retiredVehicles.get(id);
     if (!vehicle) throw new Error(`Player vehicle ${id} is missing from the simulation.`);
     return vehicle;
   }
@@ -559,7 +576,9 @@ export class Simulation {
   }
 
   private playerStations(): number[] {
-    return this.vehicles.filter((vehicle) => vehicle.kind === 'ego').map((vehicle) => vehicle.s);
+    const active = this.vehicles.filter((vehicle) => vehicle.kind === 'ego');
+    // With every car retired, traffic keeps spawning around where they left the road.
+    return (active.length > 0 ? active : [...this.retiredVehicles.values()]).map((vehicle) => vehicle.s);
   }
 
   private minPlayerS(): number {

@@ -11,7 +11,7 @@ export { raceSettings };
 
 const MAX_STEPS_PER_TICK = 4;
 const DRIVER_TIMEOUT_MS = 28;
-/** A driver that blows its frame budget this many steps in a row is benched until the next round. */
+/** A driver that blows its frame budget this many steps in a row is pulled off the road until the next round. */
 const MAX_CONSECUTIVE_TIMEOUTS = 30;
 /** Rendering trails the simulation so there is usually a later step to interpolate toward. */
 const RENDER_DELAY_SECONDS = FIXED_TIMESTEP * 2;
@@ -418,8 +418,8 @@ export class RaceEngine {
     const racers = this.racers;
     const runs = racers.map(async (racer) => {
       const id = racer.driver.playerId;
-      const input = simulation.createPlayerInput(id, this.settings, FIXED_TIMESTEP);
       if (racer.benched || !racer.driver.sandbox) return [id, undefined] as const;
+      const input = simulation.createPlayerInput(id, this.settings, FIXED_TIMESTEP);
       try {
         const result = await racer.driver.sandbox.run(input, DRIVER_TIMEOUT_MS, false);
         racer.timeouts = 0;
@@ -444,11 +444,12 @@ export class RaceEngine {
       racer.timeouts += 1;
       if (racer.timeouts >= MAX_CONSECUTIVE_TIMEOUTS && !racer.benched) {
         racer.benched = true;
+        this.simulation?.retirePlayer(racer.driver.playerId);
         this.setStatus(
           racer.driver,
           racer.version,
           'error',
-          `Your driver kept exceeding its ${DRIVER_TIMEOUT_MS} ms time budget, so it is coasting for the rest of round ${this.round}.`,
+          `Your driver kept exceeding its ${DRIVER_TIMEOUT_MS} ms time budget, so it was pulled off the road for the rest of round ${this.round}.`,
         );
       }
       return;

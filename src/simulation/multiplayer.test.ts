@@ -39,6 +39,27 @@ describe('multi-player simulation', () => {
     expect(simulation.getSnapshot(settings, { focusId: 'p2' }).telemetry.speed).toBeCloseTo(coasting.speed);
   });
 
+  it('removes a retired player from the road and freezes its distance', () => {
+    const settings = { ...DEFAULT_SETTINGS, trafficDensity: 0 };
+    const simulation = new Simulation(settings, { players: players.slice(0, 2) });
+    const drive = (steps: number) => {
+      for (let step = 0; step < steps; step += 1) {
+        for (const id of simulation.playerIds) simulation.createPlayerInput(id, settings, FIXED_TIMESTEP);
+        simulation.stepPlayers(FIXED_TIMESTEP, new Map([['p1', { motor: 1, steering: 0 }], ['p2', { motor: 1, steering: 0 }]]), settings);
+      }
+    };
+    drive(30);
+    simulation.retirePlayer('p2');
+    const retiredDistance = simulation.getPlayerStates()[1].distance;
+    drive(30);
+
+    const [racing, retired] = simulation.getPlayerStates();
+    expect(retired).toMatchObject({ retired: true, distance: retiredDistance });
+    expect(racing.retired).toBe(false);
+    expect(simulation.getSnapshot(settings).vehicles.some((vehicle) => vehicle.id === 'p2')).toBe(false);
+    expect(simulation.getVehicleFrames().has('p2')).toBe(false);
+  });
+
   it('blames the follower for a rear-end and stalls it', () => {
     const simulation = new Simulation(DEFAULT_SETTINGS, { players: players.slice(0, 2), atFaultStallSeconds: 2 });
     const internals = simulation as unknown as SimulationInternals;

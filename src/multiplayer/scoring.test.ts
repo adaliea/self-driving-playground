@@ -4,7 +4,7 @@ import { parseHostMessage, sanitizePlayerName } from './protocol';
 import { RACE_SCORING, applyRoundResults, roundPoints, scoreRound } from './scoring';
 
 function state(id: string, distance: number, collisions = 0, atFaultCollisions = 0, edgeHits = 0): PlayerRaceState {
-  return { id, distance, s: distance, speed: 20, laneIndex: 1, collisions, atFaultCollisions, edgeHits, stalled: false };
+  return { id, distance, s: distance, speed: 20, laneIndex: 1, collisions, atFaultCollisions, edgeHits, stalled: false, retired: false };
 }
 
 describe('race scoring', () => {

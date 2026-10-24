@@ -189,7 +189,10 @@ export function HostView() {
         return;
       }
       skipped = 0;
-      const states = (engine?.playerStates() ?? []).map((state) => ({ ...state, s: poses?.get(state.id)?.s ?? state.s }));
+      const allStates = engine?.playerStates() ?? [];
+      // Benched cars leave the road, so the camera follows whoever is still racing.
+      const onRoad = allStates.filter((state) => !state.retired);
+      const states = (onRoad.length > 0 ? onRoad : allStates).map((state) => ({ ...state, s: poses?.get(state.id)?.s ?? state.s }));
       if (!engine || states.length === 0) {
         renderer.renderIdle(now / 1000);
       } else {
