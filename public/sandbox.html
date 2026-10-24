@@ -16,7 +16,11 @@
         let currentCode = '';
         let currentVersion = 0;
         let worker = null;
+        let workerLoaded = false;
         const pending = new Map();
+        // Runs reach the worker one at a time so each frame budget only counts that run's own time,
+        // even when the host pipelines several steps ahead.
+        const queue = [];
 
         const send = (message) => parent.postMessage(message, '*');
 
@@ -33,11 +37,30 @@
         const terminateWorker = () => {
           if (worker) worker.terminate();
           worker = null;
+          workerLoaded = false;
           for (const [id, record] of pending) {
             clearTimeout(record.timer);
             send({ type: 'run-error', id, message: 'Autopilot code was restarted.' });
           }
           pending.clear();
+        };
+
+        const failQueued = () => {
+          for (const message of queue.splice(0)) send({ type: 'run-error', id: message.id, message: 'Autopilot code was restarted.' });
+        };
+
+        const pump = () => {
+          if (!worker || !workerLoaded || pending.size > 0 || queue.length === 0) return;
+          const message = queue.shift();
+          const timer = setTimeout(() => {
+            pending.delete(message.id);
+            terminateWorker();
+            if (currentCode) createWorker(currentCode, currentVersion);
+            send({ type: 'run-error', id: message.id, message: 'Autopilot exceeded the frame budget and was restarted.' });
+          }, Math.max(4, Math.min(100, message.timeoutMs)));
+
+          pending.set(message.id, { timer });
+          worker.postMessage({ type: 'run-autopilot', id: message.id, input: message.input, inspect: message.inspect !== false });
         };
 
         const createWorker = (code, version) => {
@@ -466,11 +489,16 @@
             const message = event.data;
             if (!isRecord(message) || typeof message.type !== 'string') return;
             if (message.type === 'worker-loaded') {
+              workerLoaded = true;
               send({ type: 'code-loaded', version });
+              pump();
               return;
             }
             if (message.type === 'worker-load-error') {
               send({ type: 'code-load-error', version, message: String(message.message || 'Unable to load user code.') });
+              // The worker still answers runs, with "not loaded" errors, so queued runs do not hang.
+              workerLoaded = true;
+              pump();
               return;
             }
             if (message.type === 'worker-result') {
@@ -487,6 +515,7 @@
                 inspection: message.inspection,
                 graphs: message.graphs
               });
+              pump();
               return;
             }
             if (message.type === 'worker-error') {
@@ -496,6 +525,7 @@
                 pending.delete(message.id);
               }
               send({ type: 'run-error', id: message.id, message: String(message.message || 'Runtime error.'), stack: message.stack });
+              pump();
             }
           };
 
@@ -507,6 +537,7 @@
         window.addEventListener('message', (event) => {
           const message = event.data;
           if (isLoadMessage(message)) {
+            failQueued();
             createWorker(message.js, message.version);
             return;
           }
@@ -517,15 +548,8 @@
               return;
             }
 
-            const timer = setTimeout(() => {
-              pending.delete(message.id);
-              terminateWorker();
-              if (currentCode) createWorker(currentCode, currentVersion);
-              send({ type: 'run-error', id: message.id, message: 'Autopilot exceeded the frame budget and was restarted.' });
-            }, Math.max(4, Math.min(100, message.timeoutMs)));
-
-            pending.set(message.id, { timer });
-            worker.postMessage({ type: 'run-autopilot', id: message.id, input: message.input, inspect: message.inspect !== false });
+            queue.push(message);
+            pump();
           }
         });
 

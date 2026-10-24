@@ -87,11 +87,13 @@ export class SandboxClient {
     await this.start();
     const id = this.requestId++;
 
+    // The runner executes one run at a time, so a run sent behind others also waits out their budgets.
+    const queuedAhead = this.pendingRuns.size;
     return new Promise<SandboxRunResult>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pendingRuns.delete(id);
         reject(new Error('Autopilot code timed out.'));
-      }, timeoutMs + 80);
+      }, timeoutMs * (queuedAhead + 1) + 80);
 
       this.pendingRuns.set(id, { resolve, reject, timer });
       this.send({ type: 'run-autopilot', id, input, timeoutMs, inspect });

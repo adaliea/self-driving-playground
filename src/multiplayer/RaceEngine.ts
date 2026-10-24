@@ -16,6 +16,11 @@ const MAX_CONSECUTIVE_TIMEOUTS = 30;
 /** Rendering trails the simulation so there is usually a later step to interpolate toward. */
 const RENDER_DELAY_SECONDS = FIXED_TIMESTEP * 2;
 const MAX_FRAME_HISTORY = 12;
+/**
+ * Drivers answer from sensor data this many steps old. Running a step behind lets every runner work
+ * while the presenter renders, instead of stalling the race on the slowest round trip each step.
+ */
+const DRIVER_LATENCY_STEPS = 1;
 
 export const PLAYER_COLORS = [
   '#ff5a5f', '#ffb400', '#00c2a8', '#3d8bff', '#b15cff', '#ff7ac6', '#7ed957', '#ff8a3d',
@@ -111,6 +116,8 @@ export class RaceEngine {
   private racers: Racer[] = [];
   private accumulator = 0;
   private frameHistory: { time: number; frames: Map<string, VehicleFrame> }[] = [];
+  /** Driver outputs still being computed, oldest first; see DRIVER_LATENCY_STEPS. */
+  private inflight: Promise<Map<string, unknown>>[] = [];
   private renderTime = 0;
   private intermissionEndsAt = 0;
   private stepping = false;
@@ -316,6 +323,7 @@ export class RaceEngine {
         atFaultStallSeconds: RACE_SCORING.atFaultStallSeconds,
       });
       this.accumulator = 0;
+      this.inflight = [];
       this.frameHistory = [];
       this.renderTime = 0;
       this.recordFrames(this.simulation);
@@ -407,7 +415,8 @@ export class RaceEngine {
   }
 
   private async step(simulation: Simulation): Promise<void> {
-    const runs = this.racers.map(async (racer) => {
+    const racers = this.racers;
+    const runs = racers.map(async (racer) => {
       const id = racer.driver.playerId;
       const input = simulation.createPlayerInput(id, this.settings, FIXED_TIMESTEP);
       if (racer.benched || !racer.driver.sandbox) return [id, undefined] as const;
@@ -416,11 +425,15 @@ export class RaceEngine {
         racer.timeouts = 0;
         return [id, result.output] as const;
       } catch (error) {
-        this.handleRunError(racer, error);
+        // Runs still in flight when a round ends fail as their runners reload; that is not the driver's fault.
+        if (this.racers === racers) this.handleRunError(racer, error);
         return [id, undefined] as const;
       }
     });
-    const outputs = new Map<string, unknown>(await Promise.all(runs));
+    this.inflight.push(Promise.all(runs).then((entries) => new Map<string, unknown>(entries)));
+    // Cars coast for the first steps of a round, until the first answers are due.
+    const outputs = this.inflight.length > DRIVER_LATENCY_STEPS ? await this.inflight.shift()! : new Map<string, unknown>();
+    if (this.disposed || this.racers !== racers) return;
     simulation.stepPlayers(FIXED_TIMESTEP, outputs, this.settings);
     this.recordFrames(simulation);
   }
