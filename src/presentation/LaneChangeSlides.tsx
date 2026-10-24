@@ -314,10 +314,10 @@ export function LateralVelocityExplainer() {
             Your PID no longer steers. It decides <b>how fast to slide toward the lane center</b>. A second controller, already in your
             Toolbox, steers to hold that sideways speed.
           </p>
-          <ul className="grid gap-2 text-xl font-bold">
-            <li>🛣️ Capping the sideways speed makes every lane change smooth and predictable.</li>
-            <li>🎯 The same code keeps you centered and changes lanes.</li>
-            <li>🔧 Tune one simple gain: how quickly to slide back toward the center.</li>
+          <ul className="grid list-disc gap-2 pl-7 text-xl font-bold">
+            <li>Capping the sideways speed makes every lane change smooth and predictable.</li>
+            <li>The same code keeps you centered and changes lanes.</li>
+            <li>Tune one simple gain: how quickly to slide back toward the center.</li>
           </ul>
           <CodeBlock>
             <Comment>{'// Outer loop: how fast to slide toward the lane center, in m/s.'}</Comment>
