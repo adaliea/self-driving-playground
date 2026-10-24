@@ -13,7 +13,6 @@ interface ControlPanelProps {
   onReset: () => void;
   onResetSettings: () => void;
   onSettingsChange: (settings: PlaygroundSettings) => void;
-  actions?: ReactNode;
 }
 
 export function ControlPanel({
@@ -23,7 +22,6 @@ export function ControlPanel({
   onReset,
   onResetSettings,
   onSettingsChange,
-  actions,
 }: ControlPanelProps) {
   const [open, setOpen] = useState(false);
   const [noiseInfoOpen, setNoiseInfoOpen] = useState(false);
@@ -47,7 +45,6 @@ export function ControlPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {actions}
           <Button
             type="button"
             variant={open ? 'secondary' : 'ghost'}

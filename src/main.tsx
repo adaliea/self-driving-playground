@@ -15,25 +15,10 @@ const PlayerView = lazy(() => import('./multiplayer/PlayerView').then((module) =
 function Root() {
   const path = window.location.pathname.replace(/\/+$/, '');
   if (path === '/host') return <HostView />;
-  if (path === '/playground') return <App controlPanelActions={<MultiplayerLinks />} />;
+  if (path === '/playground') return <App />;
   // Everything else is the race: the site root is where participants join.
   const play = /^\/play\/([^/]+)$/.exec(path);
   return <PlayerView initialRoomCode={play ? normalizeRoomCode(play[1]) : undefined} />;
-}
-
-function MultiplayerLinks() {
-  const linkClass =
-    'inline-flex h-9 items-center rounded-md border border-input px-3 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground';
-  return (
-    <>
-      <a href="/" className={linkClass}>
-        Join race
-      </a>
-      <a href="/host" className={linkClass}>
-        Host race
-      </a>
-    </>
-  );
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

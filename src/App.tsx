@@ -45,7 +45,6 @@ export interface AppTopBarContext {
 interface AppProps {
   /** Optional bar above the editor and simulator, used by multiplayer rooms. */
   renderTopBar?: (context: AppTopBarContext) => ReactNode;
-  controlPanelActions?: ReactNode;
   /**
    * Examples to offer. The first is the starting code and settings for a new
    * browser. With a single example, the editor offers "Start over" instead of a list.
@@ -61,7 +60,6 @@ const NO_LOCKED_HELPERS: readonly string[] = [];
 
 function App({
   renderTopBar,
-  controlPanelActions,
   examples = controllerExamples,
   storageNamespace = '',
   lockedHelpers = NO_LOCKED_HELPERS,
@@ -413,7 +411,6 @@ function App({
 
         <div className="flex min-h-[620px] min-w-0 flex-col lg:h-full lg:min-h-0">
           <ControlPanel
-            actions={controlPanelActions}
             running={running}
             settings={settings}
             onRunningChange={setRunning}
