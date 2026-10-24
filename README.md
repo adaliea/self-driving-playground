@@ -26,6 +26,8 @@ npm run deploy
 
 The Workers config in `wrangler.jsonc` serves the Vite build as static assets with single-page-app fallback, routes `/api/*` to the Worker first, and binds the `Room` Durable Object used for multiplayer. `npm run deploy` builds before deploying.
 
+To hide the join screen's "Practice on your own instead" link (for example during a talk), set `HIDE_PRACTICE_LINK` to `true` on the Worker. Use a secret so deploys keep it: `npx wrangler secret put HIDE_PRACTICE_LINK`, or add it as a secret under the Worker's settings in the Cloudflare dashboard. Plain dashboard variables are replaced on every `wrangler deploy`. The app reads it from `/api/config`, so no rebuild is needed. Delete the secret to bring the link back.
+
 Headless traffic/personality report:
 
 ```bash

@@ -532,7 +532,11 @@ function ThanksSlide() {
             Keep tuning, and keep in touch
           </p>
           <div className="mt-8 grid gap-3">
-            {CONTACTS.map((contact) => (
+            {[
+              // The solo playground on whatever host is serving the deck, e.g. driving.adalie.me/playground.
+              { label: 'Keep practicing', value: `${joinHost()}/playground`, href: '/playground', color: '#ff7ac6' },
+              ...CONTACTS,
+            ].map((contact) => (
               <a
                 key={contact.label}
                 href={contact.href}

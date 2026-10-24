@@ -45,6 +45,8 @@ export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
   ASSETS: Fetcher;
   LOADER: WorkerLoader;
+  /** "true" hides the join screen's "Practice on your own" link. Set it as a secret so deploys keep it. */
+  HIDE_PRACTICE_LINK?: string;
 }
 
 /**

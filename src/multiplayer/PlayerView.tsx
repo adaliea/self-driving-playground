@@ -18,6 +18,7 @@ import {
   type PresentationState,
   type RoundState,
   type ServerToPlayerMessage,
+  type SiteConfig,
   type ValidationReport,
 } from './protocol';
 import { raceSettings, DEFAULT_RACE_CONFIG } from './RaceEngine';
@@ -94,6 +95,20 @@ function JoinForm({
 }) {
   const [roomCode, setRoomCode] = useState(initialRoomCode ?? '');
   const [name, setName] = useState(() => readStoredJson<string>(PLAYER_NAME_KEY) ?? '');
+  // Hidden until the site config says otherwise, so it doesn't flash when the host has turned it off.
+  const [showPracticeLink, setShowPracticeLink] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/config')
+      .then((response) => (response.ok ? (response.json() as Promise<SiteConfig>) : { showPracticeLink: true }))
+      .catch(() => ({ showPracticeLink: true }))
+      .then((config) => {
+        if (!cancelled) setShowPracticeLink(config.showPracticeLink !== false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const valid = isValidRoomCode(roomCode) && name.trim().length > 0;
 
   const submit = (event: FormEvent) => {
@@ -136,9 +151,11 @@ function JoinForm({
         <Button type="submit" disabled={!valid || joining}>
           {joining ? 'Joining…' : 'Join'}
         </Button>
-        <a href="/playground" className="text-center text-xs text-muted-foreground underline-offset-4 hover:underline">
-          Practice on your own instead
-        </a>
+        {showPracticeLink ? (
+          <a href="/playground" className="text-center text-xs text-muted-foreground underline-offset-4 hover:underline">
+            Practice on your own instead
+          </a>
+        ) : null}
       </form>
     </div>
   );

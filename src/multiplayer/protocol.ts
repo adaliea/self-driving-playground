@@ -174,6 +174,11 @@ export type ServerToHostMessage =
   | { type: 'error'; message: string }
   | { type: 'pong' };
 
+/** Site settings from the Worker's environment, served at /api/config. */
+export interface SiteConfig {
+  showPracticeLink: boolean;
+}
+
 export interface CreateRoomResponse {
   roomCode: string;
   hostToken: string;

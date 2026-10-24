@@ -4,6 +4,7 @@ import {
   isValidRoomCode,
   normalizeRoomCode,
   type CreateRoomResponse,
+  type SiteConfig,
   type JoinRoomRequest,
 } from '../src/multiplayer/protocol';
 import type { Env } from './room';
@@ -19,6 +20,9 @@ export default {
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
     if (url.pathname === '/api/rooms' && request.method === 'POST') return createRoom(env);
+    if (url.pathname === '/api/config' && request.method === 'GET') {
+      return json({ showPracticeLink: !/^(true|1|yes)$/i.test(env.HIDE_PRACTICE_LINK?.trim() ?? '') } satisfies SiteConfig);
+    }
 
     const match = ROOM_ROUTE.exec(url.pathname);
     if (!match) return json({ error: 'Not found.' }, 404);
