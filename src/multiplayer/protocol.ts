@@ -21,11 +21,14 @@ export type RoundPhase = 'lobby' | 'racing' | 'intermission';
 export interface PresentationState {
   /** Toolbox snippet ids hidden from players' toolbox menus. */
   lockedHelpers: string[];
+  /** Whether players may submit drivers to race. Closed until the presenter opens racing. */
+  submissionsOpen: boolean;
 }
 
-/** New rooms start with the ready-made answers locked, so the presenter can reveal them. */
+/** New rooms start with the ready-made answers locked and racing closed, so the presenter can reveal them. */
 export const DEFAULT_PRESENTATION: PresentationState = {
   lockedHelpers: ['adaptive-cruise', 'fastest-lane', 'lateral-velocity'],
+  submissionsOpen: false,
 };
 
 const MAX_LOCKED_HELPERS = 32;
@@ -154,6 +157,8 @@ export type ServerToHostMessage =
     }
   | { type: 'player'; player: PlayerSummary }
   | { type: 'submission'; playerId: string; version: number; submittedAt: number; source: string }
+  /** Sent when any host connection changes the presentation state, so every host view stays in sync. */
+  | { type: 'presentation'; state: PresentationState }
   | { type: 'error'; message: string }
   | { type: 'pong' };
 
@@ -247,7 +252,7 @@ export function parsePresentationState(value: unknown): PresentationState | unde
   const lockedHelpers = value.lockedHelpers.filter(
     (id): id is string => typeof id === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(id),
   );
-  return { lockedHelpers: [...new Set(lockedHelpers)] };
+  return { lockedHelpers: [...new Set(lockedHelpers)], submissionsOpen: value.submissionsOpen === true };
 }
 
 function parseRoundState(value: unknown): RoundState | undefined {

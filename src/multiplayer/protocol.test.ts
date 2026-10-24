@@ -5,6 +5,7 @@ describe('presentation state', () => {
   it('keeps valid helper ids once each and drops anything else', () => {
     expect(parsePresentationState({ lockedHelpers: ['fastest-lane', 'fastest-lane', 'Bad Id', 7, 'lateral-velocity'] })).toEqual({
       lockedHelpers: ['fastest-lane', 'lateral-velocity'],
+      submissionsOpen: false,
     });
   });
 
@@ -15,9 +16,9 @@ describe('presentation state', () => {
   });
 
   it('parses a host presentation message', () => {
-    expect(parseHostMessage({ type: 'presentation', state: { lockedHelpers: ['clamp'] } })).toEqual({
+    expect(parseHostMessage({ type: 'presentation', state: { lockedHelpers: ['clamp'], submissionsOpen: true } })).toEqual({
       type: 'presentation',
-      state: { lockedHelpers: ['clamp'] },
+      state: { lockedHelpers: ['clamp'], submissionsOpen: true },
     });
   });
 });

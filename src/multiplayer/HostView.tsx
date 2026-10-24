@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { CARTOON_FONT, CartoonRenderer, type CartoonPlayerLabel } from '../rendering';
+import { CARTOON_FONT, CartoonRenderer, raceCameraTarget, type CartoonPlayerLabel } from '../rendering';
 import { RoomConnection, createRoom, readStoredJson, roomSocketUrl, writeStoredJson, type ConnectionStatus } from './connection';
+import { HOST_SESSION_KEY } from './hostRoom';
 import { toolboxSnippets } from '../toolbox/snippets';
 import {
   DEFAULT_PRESENTATION,
@@ -14,7 +15,6 @@ import {
 import { RaceEngine, type DriverView, type LiveStanding, type RaceConfig } from './RaceEngine';
 import { RACE_SCORING } from './scoring';
 
-const HOST_SESSION_KEY = 'self-driving-playground:host-session:v1';
 const UI_REFRESH_MS = 250;
 const PACK_WINDOW_METERS = 120;
 /** Width reserved on the right for the standings column. */
@@ -112,6 +112,9 @@ export function HostView() {
         case 'player':
           engine.upsertPlayer(message.player);
           break;
+        case 'presentation':
+          setPresentation(message.state);
+          break;
         case 'submission':
           void engine.submit(message.playerId, message.version, message.source);
           break;
@@ -183,17 +186,16 @@ export function HostView() {
       if (!engine || states.length === 0) {
         renderer.renderIdle(now / 1000);
       } else {
-        const leaderS = Math.max(...states.map((state) => state.s));
-        const packMinS = Math.min(...states.filter((state) => state.s > leaderS - PACK_WINDOW_METERS).map((state) => state.s));
-        const span = leaderS - packMinS + 70;
-        const targetCenter = (packMinS + leaderS) / 2 + 12;
         const visibleWidth = Math.max(320, renderer.viewportWidth - SIDEBAR_PX);
-        const targetScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, (visibleWidth * 0.85) / span));
+        const target = raceCameraTarget(
+          states.map((state) => state.s),
+          { viewportWidth: visibleWidth, minScale: MIN_SCALE, maxScale: MAX_SCALE, packWindowMeters: PACK_WINDOW_METERS },
+        )!;
         const snap = camera.round !== engine.round;
         const blend = snap ? 1 : Math.min(1, elapsed * 2.5);
         camera.round = engine.round;
-        camera.centerS += (targetCenter - camera.centerS) * blend;
-        camera.scale += (targetScale - camera.scale) * blend;
+        camera.centerS += (target.centerS - camera.centerS) * blend;
+        camera.scale += (target.scale - camera.scale) * blend;
         const centerX = visibleWidth / 2;
         const half = Math.max(centerX, renderer.viewportWidth - centerX) / camera.scale + 30;
         const snapshot = engine.snapshot({ centerS: camera.centerS, behindMeters: half, aheadMeters: half, poses });
@@ -255,6 +257,11 @@ export function HostView() {
     }, UI_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, []);
+
+  const updatePresentation = (next: PresentationState) => {
+    setPresentation(next);
+    connectionRef.current?.send({ type: 'presentation', state: next });
+  };
 
   const updateConfig = (patch: Partial<RaceConfig>) => {
     const engine = engineRef.current;
@@ -485,6 +492,14 @@ export function HostView() {
               </HostButton>
               <HostButton onClick={() => void document.documentElement.requestFullscreen?.()}>Fullscreen</HostButton>
             </div>
+            <label className="mt-3 flex items-center justify-between gap-2 border-t-2 border-[#1d1b2e] pt-2">
+              Submissions open
+              <input
+                type="checkbox"
+                checked={presentation.submissionsOpen}
+                onChange={(event) => updatePresentation({ ...presentation, submissionsOpen: event.target.checked })}
+              />
+            </label>
             <div className="mt-3 border-t-2 border-[#1d1b2e] pt-2">
               <div className="text-xs font-black uppercase tracking-widest opacity-60">Player toolbox</div>
               {toolboxSnippets.map((snippet) => {
@@ -499,9 +514,7 @@ export function HostView() {
                         const lockedHelpers = unlocked
                           ? [...presentation.lockedHelpers, snippet.id]
                           : presentation.lockedHelpers.filter((id) => id !== snippet.id);
-                        const next = { lockedHelpers };
-                        setPresentation(next);
-                        connectionRef.current?.send({ type: 'presentation', state: next });
+                        updatePresentation({ ...presentation, lockedHelpers });
                       }}
                     />
                   </label>

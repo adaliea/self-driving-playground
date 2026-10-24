@@ -11,10 +11,12 @@ import './index.css';
 
 const HostView = lazy(() => import('./multiplayer/HostView').then((module) => ({ default: module.HostView })));
 const PlayerView = lazy(() => import('./multiplayer/PlayerView').then((module) => ({ default: module.PlayerView })));
+const Presentation = lazy(() => import('./presentation/Presentation').then((module) => ({ default: module.Presentation })));
 
 function Root() {
   const path = window.location.pathname.replace(/\/+$/, '');
   if (path === '/host') return <HostView />;
+  if (path === '/presentation') return <Presentation />;
   if (path === '/playground') return <App />;
   // Everything else is the race: the site root is where participants join.
   const play = /^\/play\/([^/]+)$/.exec(path);

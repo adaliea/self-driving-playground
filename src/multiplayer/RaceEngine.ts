@@ -1,6 +1,6 @@
 import type { RenderSnapshot } from '../rendering';
 import { CompilerClient, SandboxClient } from '../sandbox';
-import { FIXED_TIMESTEP, Simulation, type PlayerRaceState, type VehicleFrame } from '../simulation';
+import { FIXED_TIMESTEP, Simulation, interpolateVehicleFrames, type PlayerRaceState, type VehicleFrame } from '../simulation';
 import { SeededRandom } from '../simulation/random';
 import type { PlaygroundSettings } from '../types';
 import type { DriverStatusUpdate, LeaderboardEntry, PlayerSummary, RoundPhase, RoundResult, RoundState } from './protocol';
@@ -16,8 +16,6 @@ const MAX_CONSECUTIVE_TIMEOUTS = 30;
 /** Rendering trails the simulation so there is usually a later step to interpolate toward. */
 const RENDER_DELAY_SECONDS = FIXED_TIMESTEP * 2;
 const MAX_FRAME_HISTORY = 12;
-/** Recycled traffic teleports along the road; never interpolate across a jump this large. */
-const MAX_INTERPOLATED_JUMP_METERS = 15;
 
 export const PLAYER_COLORS = [
   '#ff5a5f', '#ffb400', '#00c2a8', '#3d8bff', '#b15cff', '#ff7ac6', '#7ed957', '#ff8a3d',
@@ -274,21 +272,7 @@ export class RaceEngine {
     if (next === 0) return history[0].frames;
     const from = history[next - 1];
     const to = history[next];
-    const alpha = (this.renderTime - from.time) / (to.time - from.time);
-    const frames = new Map<string, VehicleFrame>();
-    for (const [id, end] of to.frames) {
-      const start = from.frames.get(id);
-      if (!start || Math.abs(end.s - start.s) > MAX_INTERPOLATED_JUMP_METERS) {
-        frames.set(id, end);
-        continue;
-      }
-      frames.set(id, {
-        s: start.s + (end.s - start.s) * alpha,
-        lateral: start.lateral + (end.lateral - start.lateral) * alpha,
-        headingOffset: start.headingOffset + (end.headingOffset - start.headingOffset) * alpha,
-      });
-    }
-    return frames;
+    return interpolateVehicleFrames(from.frames, to.frames, (this.renderTime - from.time) / (to.time - from.time));
   }
 
   private recordFrames(simulation: Simulation): void {

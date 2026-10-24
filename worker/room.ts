@@ -213,6 +213,10 @@ export class Room extends DurableObject<Env> {
 
     const player = (await this.players()).get(playerId);
     if (!player) return;
+    if (!(await this.presentationState()).submissionsOpen) {
+      send(socket, { type: 'error', message: 'Racing has not opened yet. The presenter will open it soon.' });
+      return;
+    }
     if (new TextEncoder().encode(message.source).byteLength > MAX_SOURCE_BYTES) {
       send(socket, { type: 'error', message: `Driver code must be under ${MAX_SOURCE_BYTES / 1024} KB.` });
       return;
@@ -318,6 +322,7 @@ export class Room extends DurableObject<Env> {
       case 'presentation':
         await this.ctx.storage.put('presentation', message.state);
         this.broadcastToPlayers({ type: 'presentation', state: message.state });
+        this.broadcastToHosts({ type: 'presentation', state: message.state });
         return;
     }
   }
@@ -336,7 +341,8 @@ export class Room extends DurableObject<Env> {
   }
 
   private async presentationState(): Promise<PresentationState> {
-    return (await this.ctx.storage.get<PresentationState>('presentation')) ?? DEFAULT_PRESENTATION;
+    // Rooms saved before a field existed get its default.
+    return { ...DEFAULT_PRESENTATION, ...(await this.ctx.storage.get<PresentationState>('presentation')) };
   }
 
   private summary(player: StoredPlayer, closingSocket?: WebSocket): PlayerSummary {

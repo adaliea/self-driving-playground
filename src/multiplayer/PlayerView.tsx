@@ -284,7 +284,8 @@ function RaceBar({
   const validating = state.validation?.phase === 'validating';
   // Test drives are seeded from the code, so resubmitting rejected code would only fail again.
   const rejectedUnchanged = state.validation?.phase === 'rejected' && state.validation.source === context.code;
-  const status = describeStatus(state, session.playerId);
+  const submissionsOpen = state.presentation.submissionsOpen;
+  const status = submissionsOpen ? describeStatus(state, session.playerId) : undefined;
   const secondsLeft = state.round.endsAt ? Math.max(0, Math.ceil((state.round.endsAt - Date.now()) / 1000)) : undefined;
 
   return (
@@ -320,53 +321,59 @@ function RaceBar({
         ) : null}
 
         <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            className="text-xs text-muted-foreground underline-offset-4 hover:underline"
-            onClick={() => context.applySettings(raceSettings(0, DEFAULT_RACE_CONFIG.trafficDensity))}
-            title="Noise on, assists off, race traffic density and starting speed"
-          >
-            Practice with race settings
-          </button>
-          <div className="group relative">
-            <Button
-              type="button"
-              size="sm"
-              variant={rejectedUnchanged ? 'destructive' : 'default'}
-              disabled={!connected || !context.codeReady || context.assistsOn || unchanged || validating || rejectedUnchanged}
-              onClick={() => onSubmit(context.code)}
-              aria-describedby="submission-validation"
-            >
-              {validating ? <Loader2 className="animate-spin" /> : rejectedUnchanged ? <XCircle /> : <Send />}
-              {validating
-                ? 'Validating…'
-                : rejectedUnchanged
-                  ? 'Not accepted'
-                  : unchanged
-                    ? `Submitted v${state.submittedVersion}`
-                    : state.submittedVersion
-                      ? 'Submit new version'
-                      : 'Submit to race'}
-            </Button>
-            <ValidationPopover
-              validation={state.validation}
-              racingVersion={state.submittedVersion}
-              blockedReason={
-                !context.codeReady
-                  ? 'Fix the compile errors in the editor first.'
-                  : context.assistsOn
-                    ? 'Turn off steer and accelerate assist first: races run without them.'
-                    : undefined
-              }
-            />
-          </div>
+          {submissionsOpen ? (
+            <>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+                onClick={() => context.applySettings(raceSettings(0, DEFAULT_RACE_CONFIG.trafficDensity))}
+                title="Noise on, assists off, race traffic density and starting speed"
+              >
+                Practice with race settings
+              </button>
+              <div className="group relative">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={rejectedUnchanged ? 'destructive' : 'default'}
+                  disabled={!connected || !context.codeReady || context.assistsOn || unchanged || validating || rejectedUnchanged}
+                  onClick={() => onSubmit(context.code)}
+                  aria-describedby="submission-validation"
+                >
+                  {validating ? <Loader2 className="animate-spin" /> : rejectedUnchanged ? <XCircle /> : <Send />}
+                  {validating
+                    ? 'Validating…'
+                    : rejectedUnchanged
+                      ? 'Not accepted'
+                      : unchanged
+                        ? `Submitted v${state.submittedVersion}`
+                        : state.submittedVersion
+                          ? 'Submit new version'
+                          : 'Submit to race'}
+                </Button>
+                <ValidationPopover
+                  validation={state.validation}
+                  racingVersion={state.submittedVersion}
+                  blockedReason={
+                    !context.codeReady
+                      ? 'Fix the compile errors in the editor first.'
+                      : context.assistsOn
+                        ? 'Turn off steer and accelerate assist first: races run without them.'
+                        : undefined
+                  }
+                />
+              </div>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">Racing opens later in the talk. Practice here until then.</span>
+          )}
           <Button type="button" size="sm" variant="ghost" onClick={onLeave} title="Leave room">
             <LogOut />
           </Button>
         </div>
       </div>
 
-      {context.assistsOn ? (
+      {context.assistsOn && submissionsOpen ? (
         <div className="mt-1 text-xs text-amber-400">
           Assists are on, so your code isn't fully driving. Races run with assists off: turn them off (or use{' '}
           <button

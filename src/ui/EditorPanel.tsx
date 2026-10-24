@@ -299,6 +299,8 @@ interface EditorPanelProps {
   compileWarnings: CompileWarning[];
   /** Toolbox source to show and type-check against: helpers the presenter hasn't locked. */
   toolboxSource: string;
+  /** Editor font size in pixels. Default: 13. */
+  fontSize?: number;
   codeStatus: string;
   inspectionStore: RuntimeInspectionStore;
   /**
@@ -317,6 +319,7 @@ export function EditorPanel({
   compileErrors,
   compileWarnings,
   toolboxSource,
+  fontSize = 13,
   codeStatus,
   inspectionStore,
   renderToolbox,
@@ -566,8 +569,8 @@ export function EditorPanel({
             readOnly: isReadOnly,
             minimap: { enabled: false },
             fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
-            fontSize: 13,
-            lineHeight: 20,
+            fontSize,
+            lineHeight: Math.round(fontSize * 1.54),
             fontLigatures: false,
             scrollBeyondLastLine: false,
             wordWrap: 'on',

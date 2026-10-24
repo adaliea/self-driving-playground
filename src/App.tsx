@@ -54,6 +54,12 @@ interface AppProps {
   storageNamespace?: string;
   /** Toolbox snippet ids the presenter has locked. */
   lockedHelpers?: readonly string[];
+  /** Fill the parent element instead of the window, e.g. inside a presentation slide. */
+  embedded?: boolean;
+  /** Editor font size in pixels. Default: 13. */
+  editorFontSize?: number;
+  /** False while hidden: skips drawing and telemetry updates. A running simulation keeps going. */
+  active?: boolean;
 }
 
 const NO_LOCKED_HELPERS: readonly string[] = [];
@@ -63,6 +69,9 @@ function App({
   examples = controllerExamples,
   storageNamespace = '',
   lockedHelpers = NO_LOCKED_HELPERS,
+  embedded = false,
+  editorFontSize,
+  active = true,
 }: AppProps = {}) {
   const [baseSettings] = useState<PlaygroundSettings>(() => ({ ...DEFAULT_SETTINGS, ...examples[0]?.recommendedSettings }));
   const [initialController] = useState(() => loadInitialController(examples, storageNamespace));
@@ -96,6 +105,8 @@ function App({
   const compileSequenceRef = useRef(0);
   const runtimeErrorRef = useRef<string | undefined>(undefined);
   const graphsRef = useRef<GraphValues>();
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const firstCompileDoneRef = useRef(false);
 
   if (!compilerRef.current) compilerRef.current = new CompilerClient();
@@ -294,6 +305,10 @@ function App({
         accumulator = 0;
       }
 
+      if (!activeRef.current) {
+        animationFrame = requestAnimationFrame(frame);
+        return;
+      }
       const snapshot = simulation.getSnapshot(settingsSnapshot);
       rendererRef.current?.render(snapshot);
       if (now - lastTelemetryUpdate > 110) {
@@ -370,7 +385,7 @@ function App({
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground lg:h-screen">
+    <div className={`flex flex-col bg-background text-foreground ${embedded ? 'h-full min-h-0' : 'min-h-screen lg:h-screen'}`}>
       {renderTopBar?.({
         code,
         codeReady: codeStatus === 'Code loaded' && compileErrors.length === 0,
@@ -400,6 +415,7 @@ function App({
               compileErrors={compileErrors}
               compileWarnings={compileWarnings}
               toolboxSource={toolboxSource}
+              fontSize={editorFontSize}
               codeStatus={displayedCodeStatus}
               inspectionStore={inspectionStoreRef.current}
               renderToolbox={(insertAtCursor) => <ToolboxPanel snippets={unlockedSnippets} source={code} onInsert={insertAtCursor} />}

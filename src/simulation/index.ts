@@ -1,5 +1,5 @@
 export { DEFAULT_SETTINGS, FIXED_TIMESTEP } from './defaults';
-export { Simulation } from './simulation';
+export { Simulation, interpolateVehicleFrames } from './simulation';
 export type {
   PlayerRaceState,
   SimulationDebugState,

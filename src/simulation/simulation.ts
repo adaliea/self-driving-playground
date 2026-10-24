@@ -94,6 +94,34 @@ export interface VehicleFrame {
   headingOffset: number;
 }
 
+/** Recycled traffic teleports along the road; never interpolate across a jump this large. */
+const MAX_INTERPOLATED_JUMP_METERS = 15;
+
+/**
+ * Poses part way from one simulation step to the next, for smooth drawing when
+ * the screen refreshes at a different rate than the simulation steps.
+ */
+export function interpolateVehicleFrames(
+  from: ReadonlyMap<string, VehicleFrame>,
+  to: ReadonlyMap<string, VehicleFrame>,
+  alpha: number,
+): Map<string, VehicleFrame> {
+  const frames = new Map<string, VehicleFrame>();
+  for (const [id, end] of to) {
+    const start = from.get(id);
+    if (!start || Math.abs(end.s - start.s) > MAX_INTERPOLATED_JUMP_METERS) {
+      frames.set(id, end);
+      continue;
+    }
+    frames.set(id, {
+      s: start.s + (end.s - start.s) * alpha,
+      lateral: start.lateral + (end.lateral - start.lateral) * alpha,
+      headingOffset: start.headingOffset + (end.headingOffset - start.headingOffset) * alpha,
+    });
+  }
+  return frames;
+}
+
 export interface PlayerRaceState {
   id: string;
   distance: number;
