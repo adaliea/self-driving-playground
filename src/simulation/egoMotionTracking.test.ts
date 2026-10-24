@@ -245,6 +245,30 @@ describe.each([
 });
 
 describe('ego-motion compensation invariants', () => {
+  it.each([
+    ['built-in VehicleTracker', builtInTrackers],
+    ['toolbox createVehicleTracker', toolboxTrackers],
+  ])('%s is unaffected by ego accelerating and braking hard', (_, makeTrackers) => {
+    const straight = (egoAccel: (t: number) => number): Scenario => ({
+      duration: 4.5, ego: { ...egoStart, speed: 25 }, egoYawRate: () => 0, egoAccel,
+      egoRoadHeading: (ego) => ego.heading,
+      targets: [
+        { id: 'lead', x: 0, y: 40, heading: 0, speed: 24, yawRate: 0 },
+        { id: 'left-lane', x: -3.7, y: 70, heading: 0, speed: 22, yawRate: 0 },
+        { id: 'behind', x: 3.7, y: -20, heading: 0, speed: 30, yawRate: 0 },
+      ],
+    });
+    const steady = runScenario(straight(() => 0), makeTrackers());
+    const pumping = runScenario(straight((t) => (Math.floor(t / 0.75) % 2 ? -4 : 4)), makeTrackers());
+    const braking = runScenario(straight((t) => (t > 1.5 && t < 3 ? -7 : 0)), makeTrackers());
+    for (const result of [pumping, braking]) {
+      // Same noise draws as the steady run, so compensation leaves errors unchanged.
+      expect(result.compensated.position).toBeCloseTo(steady.compensated.position, 3);
+      expect(result.compensated.velocity).toBeCloseTo(steady.compensated.velocity, 3);
+      expect(result.legacy.velocity).toBeGreaterThan(steady.legacy.velocity * 3);
+    }
+  });
+
   it('holds a parked car at zero lateral and -egoSpeed longitudinal velocity during a steady turn', () => {
     const tracker = new VehicleTracker();
     const ego: Pose = { x: 0, y: 0, heading: 0, speed: 20 };
