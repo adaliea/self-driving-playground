@@ -57,10 +57,10 @@ describe('createLaneChooser', () => {
     expect(choose(input([car(0, 30, 18), car(-1, 40, 22), car(1, 40, 26)]))).toBe(1);
     expect(choose(input([car(0, 30, 18), car(-1, 40, 22)]))).toBe(1);
     expect(choose(input([car(0, 30, 18), car(1, 40, 22)]))).toBe(-1);
-    // An open lane at the assumed 29 m/s is only 3 m/s faster than a 26 m/s lead.
-    expect(choose(input([car(0, 30, 26), car(-1, 30, 26)]), { minSpeedGain: 2 })).toBe(1);
-    expect(choose(input([car(0, 30, 26), car(-1, 30, 26)]), { minSpeedGain: 4 })).toBe(0);
-    expect(choose(input([car(0, 30, 26), car(-1, 30, 26)]), { minSpeedGain: 4, openLaneSpeed: 31 })).toBe(1);
+    // An open lane at the assumed 50 m/s is 24 m/s faster than a 26 m/s lead.
+    expect(choose(input([car(0, 30, 26), car(-1, 30, 26)]), { minSpeedGain: 20 })).toBe(1);
+    expect(choose(input([car(0, 30, 26), car(-1, 30, 26)]), { minSpeedGain: 25 })).toBe(0);
+    expect(choose(input([car(0, 30, 26), car(-1, 30, 26)]), { minSpeedGain: 4, openLaneSpeed: 29 })).toBe(0);
   });
 
   it('stays put when the current lane is open or the lead is beyond the lookahead', () => {

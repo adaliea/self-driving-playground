@@ -445,7 +445,7 @@ interface LaneChooserOptions {
   minSpeedGain?: number;
   /** Meters ahead to look for the vehicle that sets each lane's speed. Default: 60. */
   lookahead?: number;
-  /** Speed in m/s assumed for a lane with nobody ahead within the lookahead. Set it to your cruise speed. Default: 29. */
+  /** Speed in m/s assumed for a lane with nobody ahead within the lookahead. Default: 50, faster than nearly all traffic. */
   openLaneSpeed?: number;
   /** Center-to-center clearance in meters needed ahead in the new lane. Default: 10. */
   minFrontGap?: number;
@@ -488,7 +488,7 @@ interface LaneChooser {
  * @param options Tuning. Every field is optional:
  * @param options.minSpeedGain Minimum speed gain, in m/s, an adjacent lane must offer before switching. Default 2.
  * @param options.lookahead Meters ahead to look for the vehicle that sets each lane's speed. Default 60.
- * @param options.openLaneSpeed Speed, in m/s, assumed for a lane with nobody ahead within the lookahead. Set it to your cruise speed. Default 29.
+ * @param options.openLaneSpeed Speed, in m/s, assumed for a lane with nobody ahead within the lookahead. Default 50, faster than nearly all traffic, so an open lane looks best.
  * @param options.minFrontGap Center-to-center clearance, in meters, needed ahead in the new lane. Default 10.
  * @param options.minRearGap Center-to-center clearance, in meters, needed behind in the new lane, plus 1.5 s of the rear vehicle's closing speed. Default 10.
  * @param options.cooldown Seconds to wait after a lane change finishes or is abandoned before choosing again. Default 3.
@@ -498,7 +498,7 @@ interface LaneChooser {
 function createLaneChooser(options: LaneChooserOptions = {}): LaneChooser {
   const minSpeedGain = options.minSpeedGain ?? 2;
   const lookahead = options.lookahead ?? 60;
-  const openLaneSpeed = options.openLaneSpeed ?? 29;
+  const openLaneSpeed = options.openLaneSpeed ?? 50;
   const minFrontGap = options.minFrontGap ?? 10;
   const minRearGap = options.minRearGap ?? 10;
   const cooldown = options.cooldown ?? 3;
