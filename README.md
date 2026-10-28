@@ -2,6 +2,27 @@
 
 A web-based PID control playground for a top-down self-driving highway simulation. Users edit TypeScript autopilot code in a VS-Code-like editor and immediately see how the controller behaves with noisy sensors, traffic, assist overrides, and imperfect actuation.
 
+![The playground: the autopilot editor on the left, the simulator and live PID telemetry on the right](docs/screenshots/playground.png)
+
+## Screenshots
+
+### Playground
+
+The solo playground lives at `/playground`. **Explore telemetry** opens a fullscreen graph workspace for speed, lead vehicle, motor, steering, and PID signals.
+
+![Telemetry explorer graphing speed, motor, and steering over the last 30 seconds](docs/screenshots/telemetry.png)
+
+### Presentation
+
+`/presentation` is an 18-slide talk deck, "Code a Self-Driving Car: Introduction to Control Systems". It hosts a race room, so the audience joins with the room code shown on the slides and races their own autopilots at the end. Arrow keys, Space, and clicker PageUp/PageDown move between slides.
+
+| | |
+| --- | --- |
+| ![Title slide with the room code to join](docs/screenshots/presentation-title.png) | ![Mission slide: read the sensors, decide, race, next to a demo race](docs/screenshots/presentation-mission.png) |
+| ![Bang-bang control slide with the live editor and simulator](docs/screenshots/presentation-editor.png) | ![Interactive PID slide with kp, ki, and kd sliders](docs/screenshots/presentation-pid.png) |
+
+![Feedforward slide comparing a feedback-only car with a feedforward plus feedback car on the same curve](docs/screenshots/presentation-feedforward.png)
+
 ## Run
 
 ```bash
